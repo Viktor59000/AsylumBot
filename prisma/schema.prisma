@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id // Discord ID
+  username  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  coins     Int      @default(0)
+  status    String   @default("IDLE") // IDLE, QUEUED, LOBBY, INGAME
+
+  // Relations
+  elo       Elo[]
+  matches   MatchPlayer[]
+  igns      UserIgn[]
+  penalties Penalty[]
+  daily     DailyProgress?
+  purchases Purchase[]
+  
+  clanId    Int?
+  clan      Clan?    @relation(fields: [clanId], references: [id])
+}
+
+model DailyProgress {
+  id           Int      @id @default(autoincrement())
+  userId       String   @unique
+  matchesPlayed Int     @default(0)
+  matchesWon    Int     @default(0)
+  lastUpdate    DateTime @default(now())
+  
+  user         User     @relation(fields: [userId], references: [id])
+}
+
+model UserIgn {
+  id         Int      @id @default(autoincrement())
+  userId     String
+  game       String
+  ign        String
+  preferences String? // JSON string for roles, agents, etc.
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, game])
+}
+
+model Elo {
+  id            Int      @id @default(autoincrement())
+  userId        String
+  game          String   // 'rl', 'cs2', 'r6s', 'lol', 'valorant'
+  rating        Int      @default(1000)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  winStreak     Int      @default(0)
+  highestRating Int      @default(1000)
+  lastMatchDate DateTime @default(now())
+  seasonId      Int?
+  
+  user          User     @relation(fields: [userId], references: [id])
+  season        Season?  @relation(fields: [seasonId], references: [id])
+
+  @@unique([userId, game, seasonId], name: "userId_game_seasonId")
+}
+
+model Match {
+  id        Int      @id @default(autoincrement())
+  game      String
+  createdAt DateTime @default(now())
+  winner    String?  // 'team1' or 'team2'
+  map       String?
+  isRanked  Boolean  @default(true)
+  seasonId  Int?
+  channelId1 String?
+  channelId2 String?
+  
+  players   MatchPlayer[]
+  season    Season?  @relation(fields: [seasonId], references: [id])
+}
+
+model MatchPlayer {
+  matchId   Int
+  userId    String
+  team      String   // 'team1' or 'team2'
+  role      String?  // For LoL/Valorant
+  kda       String?  // "K/D/A"
+  
+  match     Match    @relation(fields: [matchId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@id([matchId, userId])
+}
+
+model Season {
+  id        Int      @id @default(autoincrement())
+  name      String
+  startDate DateTime
+  endDate   DateTime?
+  isActive  Boolean  @default(false)
+  
+  elos      Elo[]
+  matches   Match[]
+}
+
+model Map {
+  id        Int      @id @default(autoincrement())
+  game      String
+  name      String
+  imageUrl  String?
+}
+
+model Penalty {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  type      String   // 'ban', 'mute', 'queue_ban'
+  reason    String?
+  duration  Int      // in minutes
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model GuildConfig {
+  id        String   @id // Guild ID
+  bannerUrl String?
+  logoUrl   String?
+  themeColor String?
+  language   String   @default("en")
+}
+
+model GameConfig {
+  id        Int      @id @default(autoincrement())
+  guildId   String
+  game      String   // 'rl', 'lol', etc.
+  region    String   // 'EUW', 'NA'
+  mode      String   // 'Ranked', 'Casual', 'Captain'
+  
+  // Channel IDs
+  queueChannelId        String?
+  historyChannelId      String?
+  leaderboardChannelId  String?
+  adminLogChannelId     String?
+  webhookUrl            String?
+  queueMessageId        String? // ID of the permanent queue message for auto-updates
+  
+  @@unique([guildId, game])
+}
+
+model ShopItem {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  price       Int
+  roleId      String
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  
+  purchases   Purchase[]
+}
+
+model Purchase {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  itemId    Int
+  cost      Int
+  date      DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+  item      ShopItem @relation(fields: [itemId], references: [id])
+}
+
+model RoleMenuOption {
+  id        Int      @id @default(autoincrement())
+  guildId   String
+  label     String
+  emoji     String
+  roleId    String
+  
+  @@unique([guildId, roleId])
+}
+
+model Clan {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  imageUrl    String?
+  leaderId    String
+  createdAt   DateTime @default(now())
+  
+  members     User[]
+}
