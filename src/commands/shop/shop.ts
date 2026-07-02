@@ -1,9 +1,8 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { ShopManager } from '../../managers/ShopManager';
 import { COLORS, BOT_ICON } from '../../utils/constants';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../utils/db';
 
-const prisma = new PrismaClient();
 const shopManager = new ShopManager();
 
 export const command = {

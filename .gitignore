@@ -6,3 +6,6 @@ prisma/dev.db-journal
 dist/
 *.log
 .DS_Store
+
+# FUSE mount artifacts (Cowork session)
+.fuse_hidden*

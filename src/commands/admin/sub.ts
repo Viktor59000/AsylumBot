@@ -1,7 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, GuildChannel } from 'discord.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../utils/db';
 
-const prisma = new PrismaClient();
 
 export const command = {
     data: new SlashCommandBuilder()
@@ -69,6 +68,10 @@ export const command = {
                 }
             }
         }
+
+        const { UserManager } = await import('../../managers/UserManager');
+        await UserManager.resetStatus(oldPlayer.id).catch(() => { });
+        await UserManager.setStatus(newPlayer.id, 'INGAME').catch(() => { });
 
         await interaction.reply({ content: `Substituted <@${oldPlayer.id}> with <@${newPlayer.id}> in Match #${matchId}.`, ephemeral: false });
     },

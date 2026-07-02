@@ -20,6 +20,7 @@ import { GameStrategy } from '../strategies/GameStrategy';
 export interface LobbyState {
     matchId: number;
     game: string;
+    guildId: string;
     textChannelId: string;
     voiceChannelId1: string;
     voiceChannelId2: string;
@@ -32,6 +33,7 @@ export interface LobbyState {
 
 export class LobbyManager {
     private lobbies: Map<string, LobbyState> = new Map(); // Key: textChannelId
+    private lobbiesByMatch: Map<number, LobbyState> = new Map(); // Key: matchId
     private strategies: Map<string, GameStrategy>;
 
     constructor() {
@@ -109,6 +111,7 @@ export class LobbyManager {
         const state: LobbyState = {
             matchId,
             game,
+            guildId: guild.id,
             textChannelId: textChannel.id,
             voiceChannelId1: voiceChannels[0],
             voiceChannelId2: voiceChannels[1],
@@ -120,6 +123,7 @@ export class LobbyManager {
         };
 
         this.lobbies.set(textChannel.id, state);
+        this.lobbiesByMatch.set(matchId, state);
 
         // 4. Delegate to Strategy (Initial Message)
         const strategy = this.strategies.get(game);
@@ -145,8 +149,47 @@ export class LobbyManager {
         return this.lobbies.get(channelId);
     }
 
+    getLobbyByMatchId(matchId: number) {
+        return this.lobbiesByMatch.get(matchId);
+    }
+
     deleteLobby(channelId: string) {
+        const state = this.lobbies.get(channelId);
+        if (state) this.lobbiesByMatch.delete(state.matchId);
         this.lobbies.delete(channelId);
+    }
+
+    async cleanupMatch(matchId: number, guild: Guild) {
+        const { prisma } = await import('../utils/db');
+        const { UserManager } = await import('./UserManager');
+        const lobby = this.lobbiesByMatch.get(matchId);
+        const channelIds = new Set<string>();
+        if (lobby) {
+            channelIds.add(lobby.textChannelId);
+            channelIds.add(lobby.voiceChannelId1);
+            channelIds.add(lobby.voiceChannelId2);
+            (lobby.extraVoiceChannelIds || []).forEach(id => channelIds.add(id));
+        }
+        const match = await prisma.match.findUnique({ where: { id: matchId }, include: { players: true } });
+        if (match?.channelId1) channelIds.add(match.channelId1);
+        if (match?.channelId2) channelIds.add(match.channelId2);
+        if (!lobby) {
+            const orphanText = guild.channels.cache.find(c => c.name === `lobby-${matchId}` && c.type === ChannelType.GuildText);
+            if (orphanText) channelIds.add(orphanText.id);
+        }
+        for (const id of channelIds) {
+            if (!id) continue;
+            const channel = guild.channels.cache.get(id) ?? await guild.channels.fetch(id).catch(() => null);
+            if (channel) await channel.delete().catch(err => console.error(`[cleanupMatch] delete ${id}:`, (err as any)?.message));
+        }
+        const playerIds = match?.players.map(p => p.userId) ?? lobby?.players.map(p => p.user.id) ?? [];
+        for (const userId of playerIds) {
+            await UserManager.resetStatus(userId).catch(() => { });
+        }
+        if (lobby) {
+            this.lobbies.delete(lobby.textChannelId);
+            this.lobbiesByMatch.delete(matchId);
+        }
     }
 }
 

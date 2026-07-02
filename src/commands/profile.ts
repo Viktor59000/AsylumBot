@@ -1,8 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../utils/db';
 import { COLORS, GAME_CONFIGS } from '../utils/constants';
 
-const prisma = new PrismaClient();
 
 export const command = {
     data: new SlashCommandBuilder()

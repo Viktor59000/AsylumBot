@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../utils/db';
 import { Client, Guild } from 'discord.js';
 
-const prisma = new PrismaClient();
 
 export class ShopManager {
     constructor() { }

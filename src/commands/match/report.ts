@@ -1,8 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../utils/db';
 import { COLORS } from '../../utils/constants';
 
-const prisma = new PrismaClient();
 
 export const command = {
     data: new SlashCommandBuilder()
@@ -87,19 +86,12 @@ export const command = {
             .setDescription(`**Winner:** ${winningTeam === 'team1' ? 'Team 1' : 'Team 2'}\n**Match ID:** ${matchId}`)
             .addFields({ name: 'Elo Changes', value: eloChanges.join('\n') || 'No changes' });
 
-        // Cleanup Voice Channels
-        if (interaction.guild) {
-            if (match.channelId1) {
-                const channel1 = interaction.guild.channels.cache.get(match.channelId1);
-                if (channel1) await channel1.delete().catch(console.error);
-            }
-            if (match.channelId2) {
-                const channel2 = interaction.guild.channels.cache.get(match.channelId2);
-                if (channel2) await channel2.delete().catch(console.error);
-            }
-        }
-
         await interaction.reply({ embeds: [embed] });
+
+        if (interaction.guild) {
+            const { lobbyManager } = await import('../../managers/LobbyManager');
+            await lobbyManager.cleanupMatch(matchId, interaction.guild);
+        }
 
         // Send Webhook Data
         const { WebhookManager } = await import('../../managers/WebhookManager');

@@ -1,0 +1,335 @@
+# AUDIT & CAHIER DES CHARGES — AsylumBot
+
+**Cible :** bot Discord d'inhouse multi-jeux (LoL, Valorant, CS2, R6, Rocket League), serveur ~100 membres, hébergement Railway 24/7.
+**Stack :** TypeScript + discord.js v14 + Prisma v5 (SQLite).
+**État analysé :** commit `main` (dépôt public `Viktor59000/AsylumBot`), ~5 800 lignes, 22 managers, 22 commandes, 5 stratégies de jeu.
+**Objectif du document :** servir de spécification directement exploitable par une IA de code (Claude Code / Codex). Chaque item du plan d'action indique le fichier concerné, le problème exact, et l'action attendue.
+
+> ⚠️ **Conclusion en une phrase :** dans son état actuel, **le bot ne peut pas terminer un seul cycle de match** (la file ne "pop" jamais correctement, et les joueurs restent bloqués `IN_GAME` après une partie). Les fondations sont bonnes et la couverture fonctionnelle est large, mais le flux central n'a jamais été testé de bout en bout. Il faut ~5 à 8 jours de dev pour un socle stable, puis 2–3 semaines pour "la version ultime".
+
+---
+
+## 1. AUDIT DE CODE
+
+### 1.1 Architecture générale
+
+Le découpage est sain et lisible : `commands/` (slash + handlers d'interaction), `managers/` (logique métier, souvent en singletons exportés), `strategies/` (comportement par jeu via `GameStrategy`), `utils/` (db, i18n, embeds, constants, assets). Le pattern Strategy pour différencier les jeux est le bon choix. Prisma est correctement modélisé dans l'ensemble.
+
+Mais l'architecture souffre de plusieurs défauts structurels :
+
+- **État 100 % en mémoire, non persistant.** Toute la logique "live" (files, ready-checks, votes, drafts, vetos, lobbies, spectateurs) vit dans des `Map`/`Collection` d'instance. Un redémarrage (déploiement Railway, crash, OOM) **efface tout l'état** : matchs en cours orphelins, joueurs coincés, salons non nettoyés. C'est incompatible avec un fonctionnement 24/7.
+- **Multiples instances de `PrismaClient`.** `utils/db.ts` exporte un singleton `prisma`, mais 8 fichiers en recréent un local avec `new PrismaClient()` : `EloManager.ts`, `ShopManager.ts`, `RoleMenuManager.ts`, `commands/match/report.ts`, `commands/admin/season.ts`, `commands/admin/sub.ts`, `commands/admin/cancel.ts`, `commands/admin/mmr.ts`, `commands/leaderboard.ts`, `commands/player/ign.ts`. Chaque instance ouvre son propre pool de connexions → sur SQLite cela provoque des erreurs `database is locked` sous concurrence et des fuites de connexions. **Il ne doit exister qu'un seul `PrismaClient`.**
+- **Couplage circulaire et accès privés hackés.** `VoteManager` accède au client via `this.matchmaker?.['client']` (contournement TypeScript d'un membre privé). `DraftManager` fait `(this.matchmaker as any).client`. Le `Matchmaker` reçoit le client mais les managers vont le "repêcher" par des chemins détournés. Il faut injecter le `client` proprement (voir P1).
+- **Instanciation répétée de managers à timers.** `report.ts` fait `new ChallengeManager(interaction.client)` **à chaque rapport de match** ; or le constructeur de `ChallengeManager` lance un `setInterval` (reset quotidien). Résultat : **fuite de timers** — chaque match ajoute un intervalle permanent jamais nettoyé. Idem `new PenaltyManager(...)`, `new LeaderboardManager(...)`, `new WebhookManager()` créés à la volée (moins grave car sans timer, mais incohérent). Les managers doivent être des singletons initialisés une fois au `ready`.
+- **Typage laxiste.** `LobbyState`, `DraftSession`, `lobby: any` un peu partout (`Matchmaker.balanceTeams(lobby: any)`, `finalizeMatch(lobby: any)`, `announceMatch(lobby: any, guild: any)`). `Command.data` est typé `any`. Cela masque des bugs à la compilation (ex : le bug guild ci-dessous).
+- **Deux systèmes concurrents de création de salons vocaux.** `LobbyManager.createLobby()` crée les salons vocaux, ET `VoiceManager` (statique) contient `createMatchChannels()`/`deleteChannels()` qui font la même chose mais ne sont jamais appelés (sauf `moveUsersToChannel`). Code mort et source de confusion.
+
+### 1.2 Bugs bloquants (le flux de match ne fonctionne pas)
+
+**BUG A — La file ne "pop" jamais (le plus grave).**
+`QueueManager` initialise chaque config avec `channelId: ''` (ligne ~32) et **rien ne renseigne jamais ce `channelId`**. Le `/setup` sauvegarde bien le `queueChannelId` en base (`GameConfig`), mais ne met jamais à jour la config **en mémoire** du `queueManager`. Or dans `index.ts`, le handler `queueFull` fait :
+```ts
+const config = queueManager.getConfig(game);        // channelId = ''
+const channel = await client.channels.fetch(config.channelId) as any;  // fetch('') → échoue
+if (channel) { await readyCheckManager.startReadyCheck(...) }
+```
+`channel` est toujours `null`/exception → **le ready-check ne démarre jamais** → aucun match ne se crée. Le cœur du bot est non fonctionnel.
+
+**BUG B — Les joueurs restent bloqués `IN_GAME` à vie.**
+`Matchmaker.createMatch()` passe les joueurs en `IN_GAME`, mais **aucun code ne remet le statut à `IDLE` à la fin d'un match** : ni `report.ts`, ni `cancel.ts`, ni `sub.ts` n'appellent `UserManager.resetStatus()`. Or `QueueManager.addPlayer()` exige un statut `IDLE` pour rejoindre. Conséquence : **après une seule partie, un joueur ne peut plus jamais re-queue**. `grep` confirme : `setStatus('IN_GAME')` existe dans `Matchmaker`, mais aucun `resetStatus` post-match nulle part. Bloquant absolu.
+
+**BUG C — Salons vocaux verrouillés jamais déverrouillés (LoL, CS2, Valorant, R6).**
+`LobbyManager.createLobby()` crée les vocaux avec `deny: [Connect]` pour `@everyone` et un commentaire "Specific team overwrites will be added by Matchmaker/Strategy later" — **mais ce code n'existe pas**. Seul `ArenaStrategy` accorde les permissions par équipe, et `RLStrategy` tente un `moveUsersToChannel` (qui échoue si le salon est verrouillé). Pour LoL/CS2/Valorant/R6, **les joueurs ne peuvent jamais entrer dans leur salon vocal**.
+
+**BUG D — Boutons de lobby morts (interactions "failed").**
+Les stratégies créent des boutons `match_report_win`, `match_cancel` (LoLStrategy), `rl_checkin` (RLStrategy) et `refresh_leaderboard_<game>` (setup.ts). **Aucun de ces `customId` n'est routé dans `index.ts`** (le routeur ne connaît que `setup_`, `setprofile_`, `join_queue_`, `vote_`, `role_select_`, `stats_view_`, `ready_`, `spectate_`, `afk_`, `draft_pick`, `veto_ban`). Ces boutons ne déclenchent rien → Discord affiche "This interaction failed". De plus le handler `match_report_win` de `LoLStrategy` répond littéralement « Report functionality coming in next update! ».
+
+**BUG E — Récupération du guild par un ID de joueur.**
+`Matchmaker.finalizeMatch()` :
+```ts
+const guild = this.client.guilds.cache.get(lobby.players[0]?.user.id) || this.client.guilds.cache.first();
+```
+On cherche un **guild** avec un **user id** → toujours `undefined` → repli sur `guilds.cache.first()`. Fonctionne par accident en mono-serveur, casse en multi-serveur, et trahit une confusion. Le `guildId` doit être propagé explicitement dans le `LobbyState`.
+
+**BUG F — Ready-check : mention de rôle avec un id de salon vide.**
+`ReadyCheckManager.sendReadyEmbed()` : `content: `<@&${queueManager.getConfig(state.game)?.channelId}> Match Found!`` — le `channelId` (vide, cf. BUG A) est utilisé comme **id de rôle** dans un `<@&...>`. Mention cassée et intention erronée (on voulait sans doute pinger un rôle "joueur" configurable).
+
+### 1.3 Bugs logiques par manager
+
+**QueueManager** — Le lock atomique de statut (`updateMany where status IDLE`) est une bonne idée, mais : (1) le cas "utilisateur existe mais statut ≠ IDLE parce que resté bloqué d'un crash" renvoie `queue_already_in` définitivement (voir BUG B et résilience) ; (2) `removePlayer`/`removePlayerFromAllQueues` sont `async` mais appelés sans `await` presque partout (`queue.ts`, `AFKManager`, `ReadyCheckManager`) → conditions de course sur le statut ; (3) `forceStart` émet `queueFull` avec < 10 joueurs, mais tout le pipeline aval (équilibrage, draft à 8 picks) suppose un effectif plein → comportement indéfini.
+
+**VoteManager** — (1) `setTimeout(() => this.endVote(game), 30000)` non stocké : impossible à annuler ; si un 2ᵉ vote démarre pour le même jeu, l'ancien timer déclenche quand même. (2) `endVote` récupère le salon via `this.matchmaker?.['client']` (hack). (3) Le jeu `'multigaming'` est géré (vote de jeu) mais **rien ne déclenche jamais un vote `multigaming`** — fonctionnalité fantôme (voir 2.2). (4) Aucune gestion d'égalité explicite documentée côté "random > 50 %" cohérente avec l'UI (l'utilisateur ne sait pas que Random exige la majorité absolue).
+
+**ReadyCheckManager** — (1) `endReadyCheck` contient du code mort et des commentaires d'auto-dialogue ("Wait, my logic above… That's confusing"). (2) En cas de refus/timeout, les joueurs "acceptés" sont laissés dans la file mais **l'embed de file n'est pas rafraîchi** (commentaire `// queueManager.emit(...)` désactivé). (3) `queueManager.setPlayerState(...)` appelé sans `await` (course). (4) Aucune pénalité pour un joueur qui laisse expirer / refuse (`// TODO: Add penalty`). (5) Reconstruit les joueurs depuis `queueManager.getQueue()` en supposant qu'ils y sont toujours — fragile.
+
+**Matchmaker** — (1) `balanceTeams` s'appelle "balance" mais **mélange purement aléatoirement** (`sort(() => 0.5 - Math.random())`, tri instable et biaisé de surcroît) : **l'Elo n'est jamais utilisé pour équilibrer**, alors que c'est la promesse du mode "Balanced/Ranked". Le bloc qui lit les rôles LoL/Valo ne fait rien (`// Future: Implement`). (2) `finalizeMatch` fait `deleteMany` puis `createMany` des `MatchPlayer` : acceptable, mais non transactionnel. (3) `announceMatch` cherche un salon par **nom** (`'matches'||'match-logs'||'in-progress'`) au lieu d'utiliser l'id stocké en base → fragile et non configurable.
+
+**DraftManager** — (1) **`pickOrder` codé en dur pour 8 picks** (`[1,2,2,1,1,2,2,1]`), ne fonctionne QUE pour du 5v5 (10 joueurs). Pour Rocket League (6 joueurs → 4 à drafter) la boucle attend 8 picks alors que le pool est vide après 4 → draft bloqué. Pour tout `teamSize` ≠ 5, cassé. (2) Capitaines = simplement `players[0]` et `players[1]` (pas de choix, pas basé sur l'Elo/volontariat). (3) `getChannel` via `(this.matchmaker as any).client.channels.cache.get` (hack + cache non garanti).
+
+**VetoManager** — (1) Ne démarre que depuis `CS2Strategy` (donc CS2/Valo/R6 via la stratégie partagée) ; **jamais pour les modes non-CS2 ni intégré au flux LoL**. (2) `captain = team1[0]/team2[0]` : en mode Balanced les équipes sont aléatoires, donc le "capitaine" est un joueur au hasard. (3) Aucune limite de temps / relance si un capitaine ne bannit pas → veto peut rester bloqué indéfiniment. (4) Pas de choix de side (attaque/défense) après le dernier ban.
+
+**EloManager** — (1) **Nouveau `PrismaClient`** (cf. 1.1). (2) `seasonId: null` **codé en dur** partout : le système de saison est court-circuité (voir 1.4). (3) `updateElo` ne met à jour ni `winStreak` ni `highestRating` (les colonnes existent, l'UI `stats`/`leaderboard` les affiche, mais elles restent à 0 / valeur initiale). (4) La création à la volée met `username: 'Unknown'`.
+
+**ClanManager** — Correct dans l'ensemble. Manque : pas de transfert de leadership (le leader ne peut pas quitter, `clan/leave` le bloque), pas de suppression de clan, pas de désactivation quand le dernier membre part. `getLeaderboard` charge **tous** les clans avec tous les membres et tous les Elo en mémoire (OK à 100 membres, à surveiller).
+
+**ShopManager** — (1) Nouveau `PrismaClient`. (2) Le `$transaction` débite les coins et crée l'achat, puis l'ajout du rôle est **hors transaction** : si `member.roles.add()` échoue après le débit, l'utilisateur perd ses coins sans obtenir le rôle. (3) Le cas "rôle introuvable" renvoie `{ success: true }` avec un message d'erreur → incohérent.
+
+**ChallengeManager** — (1) **Fuite de timers** (cf. 1.1, instancié par match). (2) `startDailyReset` vérifie toutes les 5 min si `heure==0 && minute<5` : peut se déclencher **deux fois** dans la fenêtre 0h00–0h05, et dépend du fuseau du serveur (Railway = UTC). (3) Reset non basé sur une date de dernière remise à zéro (pas idempotent après redémarrage).
+
+**DecayManager** — (1) `setInterval` de 24 h sans exécution au démarrage (le `processDecay()` initial est commenté) : sur Railway qui **redémarre souvent**, le decay peut ne jamais tourner. (2) Décrémente sans distinction de saison (`seasonId` non filtré). (3) `lastMatchDate` est mis à jour au **début** du match (dans `finalizeMatch`), pas à la fin — approximation acceptable mais à noter.
+
+**AFKManager** — Basé uniquement sur les DM ; si l'utilisateur a fermé ses DM, il est retiré sans avertissement visible. `warnedUsers` est un `Set` global (pas par jeu) — mineur. `removePlayer` appelé sans `await`.
+
+**SpectatorManager** — Dépend de `lobbyManager.getLobby()` (mémoire) → inopérant après redémarrage. Le bouton est posté par `announceMatch` dans un salon trouvé par nom. Logique de permissions correcte (grant Connect, deny Speak).
+
+**LeaderboardManager** — (1) `elo.findMany where game` **sans filtrer `seasonId`** → mélange saison active et archives. (2) Édite "le dernier message du bot parmi les 5 derniers" → peut éditer le mauvais message ; devrait stocker un `leaderboardMessageId` en base (comme `queueMessageId`).
+
+**WebhookManager** — `gameConfig.findFirst({ where: { game } })` ignore le `guildId` → en multi-serveur, mauvais webhook.
+
+**index.ts** — (1) Intent privilégié `MessageContent` demandé sans usage (le bot n'lit pas le contenu des messages) → risque de blocage à la vérification Discord et surface d'attaque inutile. (2) Enregistrement des commandes en **guild-only** (`applicationGuildCommands`) : nécessite `GUILD_ID`, donc mono-serveur de fait. (3) Le routeur d'interactions est un long `if/else` sur préfixes de `customId`, non extensible et incomplet (cf. BUG D).
+
+### 1.4 Système de saisons — à moitié implémenté
+
+La table `Season` a `isActive`, mais **aucun code ne crée de saison active ni ne lie les Elo/Match à une saison courante**. Tout est écrit avec `seasonId: null`. `/season end` archive les Elo `null` vers une nouvelle saison **et la crée `isActive: false`** → il n'y a jamais de saison active, et après archivage les joueurs repartent de zéro (Elo recréé à 1000). Le `stats` affiche un "historique de saison" qui ne se remplit qu'après un `/season end`. C'est cohérent en apparence mais bancal : pas de démarrage de saison, pas de `startDate` réelle, pas de bornage des matchs par saison.
+
+### 1.5 Gestion des erreurs & résilience 24/7
+
+- **Aucune persistance de l'état live** → un redémarrage en plein match laisse : des salons `lobby-<id>` + vocaux orphelins (jamais supprimés), des joueurs `IN_GAME`/`QUEUED` bloqués en base, des matchs `winner: null` éternels. **Aucune routine de récupération au boot.**
+- **Pas de nettoyage complet des salons.** `report.ts`/`cancel.ts` ne suppriment que `channelId1` et `channelId2` (2 vocaux). Le **salon texte `lobby-<id>` n'est jamais supprimé**, ni les 6 vocaux supplémentaires d'Arena (`extraVoiceChannelIds`). Fuite de salons garantie → le serveur se remplit de salons morts.
+- **Gestionnaires globaux manquants.** Pas de `process.on('unhandledRejection')` / `uncaughtException`, pas de handler `client.on('error'|'shardError'|'disconnect')`, pas d'arrêt gracieux (`SIGTERM`) pour fermer Prisma. Sur Railway, un rejet non géré peut tuer le process.
+- **Timers non nettoyés** (votes, ready-checks, challenges) → dérive mémoire sur la durée.
+- **`.env` requis non documenté** : le code attend `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `DATABASE_URL`, `PLAYER_ROLE_ID` (utilisé dans `ArenaStrategy`) — aucun `.env.example` fourni.
+- **SQLite sur Railway** : le système de fichiers Railway est éphémère hors volume persistant. Sans volume monté, **la base est effacée à chaque déploiement**. Point critique pour du 24/7 (voir P0/P1).
+
+---
+
+## 2. AUDIT FONCTIONNEL / UX
+
+### 2.1 Parcours utilisateur par fonctionnalité
+
+**Onboarding / profil.** Deux chemins concurrents : `/ign` (rapide, une commande) et `/set-profile` (wizard boutons + modal + préférences). Le wizard est plus soigné mais : après la 1ʳᵉ préférence il **s'arrête** (pas de rôle secondaire LoL malgré le commentaire), et les jeux sans préférence (cs2, r6s, arena) finissent par un simple message. Redondance `/ign` vs `/set-profile` non explicitée à l'utilisateur. `role_menu` (choix des jeux visibles) est un 3ᵉ point d'entrée. Friction : 3 façons de "se configurer", aucune ne guide vers la suivante.
+
+**File d'attente.** UX correcte (embed + boutons Join/Leave/Invite, colonnes, indicateur de groupe en exposant). Mais : (1) à cause du BUG A, **le pop ne fonctionne pas** ; (2) l'embed de file n'est **pas auto-rafraîchi** quand quelqu'un rejoint via un autre canal (le `queueMessageId` est stocké mais jamais utilisé pour éditer le message permanent) ; (3) le bouton "Invite Duo/Trio" crée un `groupId`, mais **le matchmaking ignore les groupes** → un duo peut finir dans des équipes adverses (feature trompeuse) ; (4) message "removed from all other queues" alors que le lock mono-file empêche déjà d'être dans plusieurs files (incohérence de discours).
+
+**Ready-check → Vote → Match.** Séquence conçue (ready-check 60 s → vote de mode 30 s → création). Enchaînement jamais atteint en pratique (BUG A). Sur le principe : refuser le ready-check n'entraîne aucune pénalité ; le vote n'annule pas son timer si relancé.
+
+**Draft (Captains).** Fonctionne visuellement (menu déroulant, tour par tour, embed équipes) mais cassé hors 5v5 (BUG DraftManager) et capitaines arbitraires. Pas de timer par pick.
+
+**Veto de cartes.** Uniquement CS2/Valo/R6 via `CS2Strategy`. Ban alterné jusqu'à 1 carte. Pas de timer, pas de choix de side, "capitaine" = joueur aléatoire en mode Balanced.
+
+**Rapport de résultat.** Incohérence majeure : le README annonce un report "par boutons dans le salon du match", mais les boutons sont morts (BUG D). Le seul chemin réel est la slash-command `/reportwin match_id winning_team`, **utilisable par n'importe qui, sans vérification, sans confirmation de l'équipe adverse** → triche triviale. Arena n'a **aucun** moyen de reporter (schéma `winner` = `team1`/`team2` seulement).
+
+**Clan / Shop / Stats / Leaderboard / Challenges.** Ces modules "annexes" sont les plus aboutis et globalement fonctionnels. `stats` (général + par jeu + historique saison) et `leaderboard` (pagination) sont propres. `shop` et `clan` marchent (réserves transactionnelles ci-dessus). `challenges` fonctionne mais souffre des fuites de timers.
+
+### 2.2 Fonctionnalités orphelines ou à moitié faites
+
+- **Vote `multigaming`** : `VoteManager` sait faire voter le jeu (LoL/Valo/CS2/R6), mais **rien ne déclenche ce mode** — aucune file "multigaming" n'existe. Code présent, jamais atteint.
+- **`DraftLoLManager`** : renvoie une URL statique `https://draftlol.gg/` (pas de room créée, pas de lien pré-rempli). Coquille vide.
+- **Équilibrage par Elo et par rôles** : annoncé, non implémenté (random pur).
+- **`match_report_win` / `match_cancel` / `rl_checkin` / `refresh_leaderboard_`** : boutons créés, non routés (BUG D).
+- **`VoiceManager` statique** : `createMatchChannels`/`deleteChannels` jamais appelés (doublon de `LobbyManager`).
+- **`createMatchEmbed`** (utils/embeds) : défini, jamais utilisé (Matchmaker construit son embed en dur).
+- **`queueMessageId`, `leaderboardMessageId` (implicite)** : stockés/attendus mais l'auto-update du message permanent n'est pas branché.
+- **`winStreak` / `highestRating`** : colonnes affichées mais jamais mises à jour.
+- **`Map` (table Prisma)** : modèle présent, jamais utilisé (les pools de cartes sont en dur dans `constants.ts`).
+- **`kda` / `role` (MatchPlayer)** : colonnes prévues, jamais renseignées (pas de saisie de stats détaillées).
+- **`scripts/test_db.ts`** : script de test laissé dans les sources.
+
+### 2.3 Cohérence entre jeux (traitement inégal)
+
+| Jeu | Stratégie | Draft | Veto cartes | Move vocal | Intégration externe | Report |
+|-----|-----------|-------|-------------|------------|---------------------|--------|
+| **LoL** | `LoLStrategy` (dédiée) | Captains générique + lien draftlol **factice** | ❌ | ❌ (verrouillé) | OP.GG multisearch ✅ | Bouton mort |
+| **Valorant** | `CS2Strategy` (**réutilisée**) | Captains générique | ✅ (pool CS2-like) | ❌ | ❌ (README annonce Tracker.gg, absent) | `/reportwin` |
+| **CS2** | `CS2Strategy` (dédiée) | Captains générique | ✅ | ❌ | ❌ (connect factice) | `/reportwin` |
+| **R6** | `CS2Strategy` (**réutilisée**) | Captains générique | ✅ | ❌ | ❌ | `/reportwin` |
+| **Rocket League** | `RLStrategy` (dédiée) | Captains **cassé** (6 joueurs) | ❌ | ✅ (move, mais salon verrouillé) | Room name/pass générés | `/reportwin` |
+| **Arena (LoL 2v2×8)** | `ArenaStrategy` | ❌ | ❌ | ✅ (grant + move) | ❌ | ❌ impossible |
+
+**Constat :** seul LoL a un vrai traitement dédié (encore incomplet). Valorant est le plus mal loti (mappé sur CS2, aucune intégration Tracker.gg promise, pas de sélection d'agents en jeu). Arena est un cas à part non reportable. RL a le seul auto-move mais sur des salons verrouillés. L'expérience varie fortement selon le jeu.
+
+---
+
+## 3. GAPS PAR RAPPORT À "LA VERSION ULTIME"
+
+### 3.1 Fonctionnalités standard manquantes dans un bot d'inhouse
+
+- **Report vérifié / anti-triche** : double confirmation (un joueur de chaque équipe, ou vote majoritaire), ou report réservé aux admins/capitaines. Aujourd'hui n'importe qui reporte n'importe quoi.
+- **Système de dispute / litige** : bouton "Contester le résultat" ouvrant un ticket ou pingant un rôle arbitre.
+- **Historique de matchs consultable** : `/history [joueur]` listant les derniers matchs (résultat, coéquipiers, Δelo, carte). Les données `Match`/`MatchPlayer` existent mais ne sont exposées nulle part.
+- **Gestion des no-show / dodge** : pénalité automatique (queue-ban temporaire progressif) si refus de ready-check ou abandon. Le hook `// TODO: Add penalty` est déjà là.
+- **Anti-smurf / vérification de compte** : liaison de compte de jeu (Riot ID vérifié via API), Elo de départ calibré, détection de multi-comptes (même IGN, création récente).
+- **Équilibrage réel par Elo** (+ prise en compte des rôles LoL/Valo et des groupes/duos). C'est *la* fonctionnalité cœur promise et absente.
+- **Timers sur draft et veto** + auto-pick/auto-ban si inaction.
+- **MVP / votes de fin de match**, tracking `winStreak`/`highestRating`, séries.
+- **Saisons réellement gérées** : `/season start`, saison active liée aux Elo/matchs, reset paramétrable (soft reset vers moyenne plutôt que 1000 sec).
+- **Leaderboard auto-actualisé** en message permanent édité (pas re-posté).
+- **Salon "in-progress" vivant** : embed du match mis à jour (score, statut) au lieu d'un simple message.
+- **Choix de side** après veto (CS2/Valo/R6).
+- **Rôle "capitaine" désigné** (volontaire / plus haut Elo) plutôt que `players[0]`.
+- **Logs admin** : le salon `inhouse-admin-logs` est créé mais rien n'y est écrit (force start, bans, changements MMR, annulations devraient y être tracés).
+
+### 3.2 Ce qui existe déjà nativement (à NE PAS redévelopper)
+
+- **Salons vocaux permanents, catégories, permissions statiques** : Discord natif. Ne créer dynamiquement QUE les salons de match éphémères.
+- **Rôles cosmétiques / auto-rôles simples, réaction-roles** : ProBot / Carl-bot / MEE6 le font. Le `role_menu` du bot se justifie seulement s'il pilote la visibilité des catégories de jeu (ce qui est le cas) — ne pas en faire un gestionnaire de rôles généraliste.
+- **Modération générale** (warn/mute/ban serveur, anti-spam, logs de messages) : laisser à un bot de modé dédié. Le bot doit se limiter aux **queue-bans** liés au matchmaking.
+- **Annonces / bienvenue / niveaux de chat (leveling par messages)** : hors périmètre inhouse ; le système de coins/challenges du bot est lié aux matchs, ce qui est le bon scope.
+- **Tickets génériques** : un bot à tickets existe déjà côté Discord ; pour les disputes, soit s'intégrer, soit un mini-système ciblé match.
+
+---
+
+## 4. PLAN D'ACTION PRIORISÉ
+
+> Convention : chaque item = **[Fichier(s)/Manager] — Problème — Action attendue**. Les P0 rendent le bot utilisable ; les P1 le rendent stable 24/7 ; les P2 le complètent ; les P3 le polissent.
+
+### P0 — Bugs bloquants (le bot doit pouvoir faire UN cycle de match complet)
+
+**P0-1 — Renseigner le `channelId` de file en mémoire depuis la base (débloque le pop).**
+Fichiers : `managers/QueueManager.ts`, `commands/admin/setup.ts`, `index.ts`.
+Problème : `config.channelId` reste `''` → `queueFull` ne trouve pas le salon → aucun ready-check.
+Action : au `ready` (dans `index.ts`), charger tous les `GameConfig` en base et appeler une nouvelle méthode `queueManager.setChannel(game, queueChannelId)` pour chaque. Faire de même à la fin de `/setup` (après l'`upsert`). Idéalement, faire porter à `GameConfig` (mémoire) aussi le `guildId`. Ajouter un log d'avertissement si un jeu configuré n'a pas de `channelId`.
+
+**P0-2 — Remettre les joueurs à `IDLE` en fin de match / annulation / sub.**
+Fichiers : `commands/match/report.ts`, `commands/admin/cancel.ts`, `commands/admin/sub.ts`, `managers/UserManager.ts`.
+Problème : statut jamais réinitialisé → impossible de re-queue après une partie.
+Action : après un report validé, itérer sur tous les `MatchPlayer` et `UserManager.resetStatus(userId)`. Idem dans `cancel.ts`. Dans `sub.ts`, passer l'ancien joueur en `IDLE` et le nouveau en `IN_GAME`. Centraliser dans une fonction `endMatchCleanup(matchId, guild)` (voir P0-4).
+
+**P0-3 — Accorder les permissions vocales par équipe (LoL/CS2/Valo/R6).**
+Fichiers : `managers/LobbyManager.ts` (ou `Matchmaker.finalizeMatch`), stratégies.
+Problème : vocaux créés verrouillés, permissions jamais accordées → joueurs ne peuvent pas se connecter.
+Action : après `finalizeMatch` (équipes connues), pour chaque salon d'équipe, `permissionOverwrites.edit(userId, { ViewChannel:true, Connect:true, Speak:true })` pour les membres de l'équipe correspondante. Supprimer `VoiceManager` (doublon) ou en faire l'unique utilitaire réutilisé par toutes les stratégies. Optionnel : auto-move des membres présents en vocal.
+
+**P0-4 — Nettoyage complet des salons de match + statuts (une seule routine).**
+Fichiers : nouveau `managers/MatchLifecycleManager.ts` (ou étendre `LobbyManager`), `report.ts`, `cancel.ts`.
+Problème : seuls 2 vocaux supprimés ; salon texte `lobby-<id>` et vocaux Arena jamais supprimés → fuite de salons.
+Action : stocker en base **tous** les ids de salons du match (texte + tous vocaux) — ajouter des colonnes ou une table `MatchChannel(matchId, channelId, type)`. Fonction `cleanupMatch(matchId, guild)` qui supprime tous ces salons, retire le lobby de `lobbyManager` (mémoire), et remet les joueurs à `IDLE`. Appelée par report ET cancel. Ajouter un délai optionnel (ex : suppression 60 s après report pour laisser lire le résultat).
+
+**P0-5 — Router (ou supprimer) les boutons morts.**
+Fichiers : `index.ts`, `strategies/LoLStrategy.ts`, `strategies/RLStrategy.ts`, `commands/admin/setup.ts`.
+Problème : `match_report_win`, `match_cancel`, `rl_checkin`, `refresh_leaderboard_<game>` non routés → "interaction failed".
+Action : ajouter les branches manquantes dans `index.ts` et implémenter le vrai report par boutons (voir P2-1), le refresh leaderboard (appel `LeaderboardManager.updateLeaderboard(game)`), le check-in RL. À défaut d'implémentation immédiate, **retirer les boutons** pour ne pas exposer d'interactions cassées.
+
+**P0-6 — Fixer la récupération du guild.**
+Fichier : `managers/Matchmaker.ts`, `managers/LobbyManager.ts`.
+Problème : `guilds.cache.get(user.id)` → toujours undefined.
+Action : propager `guildId` dans `LobbyState` (déjà passé à `createLobby`), et récupérer le guild via cet id partout. Supprimer le repli hasardeux sur `.first()`.
+
+**P0-7 — Un seul `PrismaClient`.**
+Fichiers : les 10 fichiers listés en 1.1.
+Problème : instances multiples → verrous SQLite, fuites.
+Action : remplacer chaque `new PrismaClient()` par `import { prisma } from '../utils/db'` (chemin relatif adapté). Vérifier qu'aucun autre `new PrismaClient` ne subsiste (`grep -r "new PrismaClient" src`).
+
+**P0-8 — Draft générique (tout `teamSize`).**
+Fichier : `managers/DraftManager.ts`.
+Problème : `pickOrder` en dur 8 picks → cassé hors 5v5 (RL surtout).
+Action : générer `pickOrder` dynamiquement en snake draft à partir du nombre de joueurs à drafter (`players.length - 2`). Terminer le draft dès que le pool est vide. Gérer effectif impair.
+
+### P1 — Stabilité & résilience 24/7
+
+**P1-1 — Persistance de la base sur Railway.**
+Fichiers : config Railway, `README`, `.env.example`.
+Problème : SQLite éphémère → base effacée à chaque déploiement.
+Action : monter un **volume persistant** Railway et pointer `DATABASE_URL` dessus ; OU migrer vers **PostgreSQL** (recommandé pour du 24/7 multi-connexions : change `provider = "postgresql"` dans `schema.prisma`, régénère les migrations). Documenter le choix.
+
+**P1-2 — Récupération d'état au démarrage (crash-safety).**
+Fichiers : `index.ts` (au `ready`), nouveau `managers/RecoveryManager.ts`.
+Problème : état live en mémoire perdu au reboot → matchs/salons/joueurs orphelins.
+Action : au boot, (a) réinitialiser à `IDLE` tout utilisateur `QUEUED`/`READY_CHECK` (files vidées de toute façon) ; (b) lister les `Match` `winner: null` plus vieux que N minutes et les marquer "abandonnés" + nettoyer leurs salons ; (c) optionnel : supprimer les salons `lobby-*` orphelins de la catégorie de match. Décision de conception à valider : soit persister l'état live (draft/veto/ready) pour reprise, soit accepter la perte et nettoyer proprement (plus simple, recommandé en v1).
+
+**P1-3 — Managers singletons, initialisés une fois.**
+Fichiers : `index.ts`, `report.ts`, tous les managers à timer.
+Problème : `new ChallengeManager()`/`PenaltyManager()`/etc. recréés par requête → fuite de timers.
+Action : instancier tous les managers une seule fois au `ready` et les exporter/injecter. Dans `report.ts`, utiliser les singletons. S'assurer que chaque `setInterval`/`setTimeout` est stocké et nettoyable.
+
+**P1-4 — Handlers globaux d'erreurs + arrêt gracieux.**
+Fichier : `index.ts`.
+Action : `process.on('unhandledRejection'|'uncaughtException', log)`, `client.on('error'|'shardError', log)`, et sur `SIGINT`/`SIGTERM` : `await prisma.$disconnect()` puis `client.destroy()`. Logger structuré (pino/winston) plutôt que `console.log`.
+
+**P1-5 — Annulation systématique des timers.**
+Fichiers : `VoteManager.ts`, `ReadyCheckManager.ts` (déjà partiellement), `ChallengeManager.ts`.
+Action : stocker chaque timer dans l'état et `clearTimeout` avant d'en relancer un / à la fin de la phase. Pour les challenges, remplacer le "check toutes les 5 min" par un vrai cron (ex : `node-cron` à `0 0 * * *` UTC) idempotent.
+
+**P1-6 — `async/await` corrects sur les mutations de statut.**
+Fichiers : `QueueManager.ts`, `ReadyCheckManager.ts`, `AFKManager.ts`, `queue.ts`.
+Problème : `removePlayer`/`setPlayerState` appelés sans `await` → courses sur le statut.
+Action : `await` partout, ou rendre ces opérations réellement synchrones côté mémoire + persistance en tâche de fond maîtrisée.
+
+**P1-7 — Retirer l'intent privilégié inutile + enregistrement de commandes.**
+Fichier : `index.ts`.
+Action : supprimer `GatewayIntentBits.MessageContent` (non utilisé). Choisir un enregistrement global (`applicationCommands`) ou garder guild-only en assumant le mono-serveur ; documenter.
+
+**P1-8 — Auto-update du message de file permanent.**
+Fichiers : `QueueManager` (event `queueUpdate`), `index.ts`, `commands/queue/queue.ts`.
+Problème : le message permanent (`queueMessageId`) n'est jamais rafraîchi.
+Action : sur `queueUpdate`, éditer le message `queueMessageId` du salon `queueChannelId` avec l'embed à jour (throttle ~2 s pour éviter le rate-limit).
+
+**P1-9 — `.env.example` + README à jour.**
+Fichiers : nouveau `.env.example`, `README.md`.
+Action : documenter `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `DATABASE_URL`, `PLAYER_ROLE_ID`. Corriger le README : noms de commandes réels (`/reportwin`, `/mmr`, `/sub`, `/cancel`, `/set-profile`), absence de `/party` (ce sont des boutons), Tracker.gg Valorant "non implémenté".
+
+### P2 — Fonctionnalités manquantes (vers la complétude)
+
+**P2-1 — Report vérifié par boutons dans le salon de match.**
+Fichiers : nouveau flux report (`strategies/*`, `index.ts`, `report.ts`).
+Action : boutons "Team Blue a gagné / Team Red a gagné / Contester". Exiger confirmation croisée (un joueur de chaque équipe) OU report par un capitaine/admin, avec fenêtre de contestation avant validation Elo. Écrire le résultat dans le salon `match-history` (id en base) et dans les logs admin. Empêcher tout report par un non-participant.
+
+**P2-2 — Équilibrage réel par Elo (+ groupes, + rôles).**
+Fichier : `managers/Matchmaker.ts` (`balanceTeams`).
+Action : remplacer le shuffle par un algo minimisant l'écart d'Elo moyen entre équipes (ex : tri par Elo puis répartition serpentin, ou recherche de la meilleure partition). Respecter les `groupId` (duos/trios dans la même équipe). Optionnel v2 : contrainte de rôles LoL/Valo à partir des préférences stockées.
+
+**P2-3 — Historique de matchs consultable.**
+Fichiers : nouvelle commande `commands/match/history.ts`.
+Action : `/history [membre] [jeu]` paginé : date, jeu, résultat, équipe, coéquipiers, carte, Δelo. Exploite `Match`/`MatchPlayer` existants.
+
+**P2-4 — Pénalités no-show / dodge automatiques.**
+Fichiers : `ReadyCheckManager.ts`, `PenaltyManager.ts`.
+Action : sur refus/expiration de ready-check, appliquer un queue-ban court croissant (ex : 5/15/30 min) via `PenaltyManager`. Journaliser dans les logs admin.
+
+**P2-5 — Système de saisons complet.**
+Fichiers : `commands/admin/season.ts`, `EloManager.ts`, `Matchmaker.ts`, `stats.ts`, `leaderboard.ts`.
+Action : `/season start`, marquer une `Season isActive`, résoudre "saison active" partout (au lieu de `seasonId: null`). Lier chaque `Match` et création d'`Elo` à la saison active. `/season end` : archiver + option soft-reset. Filtrer stats/leaderboard/decay par saison active.
+
+**P2-6 — Tracking `winStreak` / `highestRating` + MVP.**
+Fichier : `EloManager.updateElo`.
+Action : incrémenter/réinitialiser `winStreak` selon victoire/défaite, mettre à jour `highestRating = max(...)`. Optionnel : vote MVP en fin de match → coins bonus.
+
+**P2-7 — Veto : timer + choix de side + capitaine désigné.**
+Fichiers : `VetoManager.ts`, `DraftManager.ts`.
+Action : timer par action avec auto-ban/auto-pick, étape finale de choix de side (CS2/Valo/R6), désignation de capitaine (plus haut Elo ou volontaire) au lieu de `players[0]`.
+
+**P2-8 — Traitement homogène des jeux (spécialement Valorant & Arena).**
+Fichiers : `strategies/ValorantStrategy.ts` (nouveau), `constants.ts`, report Arena.
+Action : créer une vraie stratégie Valorant (pool de cartes Valo + veto + intégration Tracker.gg si promise, sinon retirer la promesse), pool de cartes propre par jeu (utiliser la table `Map` ou garder `constants` mais cohérent). Définir un mode de report Arena (classement des 8 équipes, ou 1ᵉʳ/2ᵉ) ou documenter Arena comme non-ranked.
+
+**P2-9 — Logs admin effectifs.**
+Fichiers : nouveau helper `utils/adminLog.ts`, appelé par force-start, suspend, mmr, cancel, sub, report contesté.
+Action : écrire un embed dans `adminLogChannelId` (id déjà stocké) à chaque action sensible.
+
+**P2-10 — DraftLoL réel ou message manuel honnête.**
+Fichier : `managers/DraftLoLManager.ts`, `LoLStrategy.ts`.
+Action : soit intégrer une vraie génération de lien de draft, soit afficher clairement "Draft manuel — organisez sur draftlol.gg" sans prétendre à un lien pré-rempli.
+
+### P3 — Nice-to-have / polish
+
+- **P3-1** Fusionner `/ign` et `/set-profile` en un seul parcours guidé, et chaîner les préférences (rôle secondaire LoL, etc.).
+- **P3-2** Leaderboard en message permanent édité (stocker `leaderboardMessageId`), boutons de tri/pagination persistants.
+- **P3-3** Embed "match in-progress" vivant dans `#in-progress` (statut, spectate), au lieu d'un message figé.
+- **P3-4** Transfert de leadership de clan, suppression de clan, dissolution auto si vide.
+- **P3-5** Anti-smurf : vérification Riot ID via API, calibration d'Elo de départ, alerte multi-comptes.
+- **P3-6** Tests : ajouter un vrai runner (le `package.json` a `test: exit 1`) et couvrir Elo, équilibrage, snake draft. Supprimer `scripts/test_db.ts`.
+- **P3-7** Logger structuré + niveaux, remplacement des `console.log`.
+- **P3-8** Nettoyer le code mort : `VoiceManager` (doublon), `createMatchEmbed` inutilisé, commentaires d'auto-dialogue dans `ReadyCheckManager`/`ArenaStrategy`.
+- **P3-9** Internationaliser réellement (beaucoup de chaînes sont en dur en anglais/français mélangés ; `i18n` n'est utilisé que pour la file et le ready-check).
+- **P3-10** CI (lint + build) et `onDelete: Cascade` sur les relations `MatchPlayer`/`Elo` pour simplifier les suppressions.
+
+---
+
+## 5. Ordre de mise en œuvre recommandé
+
+1. **Sprint 0 (½–1 j)** : P0-7 (Prisma unique), P1-9 (.env.example), P1-1 (persistance DB). Pré-requis techniques.
+2. **Sprint 1 (2–3 j) — "un match qui marche"** : P0-1, P0-2, P0-3, P0-4, P0-6, P0-8, puis P0-5. À l'issue : un cycle join → pop → ready → vote → match → report → cleanup fonctionne de bout en bout en 5v5 et en RL.
+3. **Sprint 2 (2–3 j) — "24/7"** : P1-2 (recovery), P1-3 (singletons), P1-4 (handlers), P1-5, P1-6, P1-8, P1-7.
+4. **Sprint 3+ (2–3 sem) — "version ultime"** : P2 dans l'ordre P2-1, P2-2, P2-3, P2-4, P2-5, puis le reste ; P3 en continu.
+
+**Test d'acceptation minimal (fin de Sprint 1)** : 10 comptes rejoignent la file LoL → ready-check → vote Balanced → salons créés avec accès vocal correct → `/reportwin` (ou boutons) → Elo mis à jour → salons supprimés → les 10 joueurs peuvent re-queue immédiatement. Répéter en Rocket League (6 joueurs) et en mode Captains.

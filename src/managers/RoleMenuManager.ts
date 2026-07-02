@@ -1,8 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../utils/db';
 import { ButtonInteraction, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel, GuildMember } from 'discord.js';
 import { COLORS, BOT_ICON } from '../utils/constants';
 
-const prisma = new PrismaClient();
 
 export class RoleMenuManager {
     constructor() { }

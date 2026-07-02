@@ -31,8 +31,12 @@ export class DraftManager {
         const captain2 = lobby.players[1];
         const pool = lobby.players.slice(2);
 
-        // Snake Draft Order for 8 picks: 1, 2, 2, 1, 1, 2, 2, 1
-        const pickOrder = [1, 2, 2, 1, 1, 2, 2, 1];
+        const pickOrder: number[] = [];
+        let current = 1;
+        for (let i = 0; i < pool.length; i++) {
+            pickOrder.push(current);
+            if (i % 2 === 0) current = current === 1 ? 2 : 1;
+        }
 
         const session: DraftSession = {
             lobby,

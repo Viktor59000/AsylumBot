@@ -1,8 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../utils/db';
 import { createLeaderboardEmbed } from '../utils/embeds';
 
-const prisma = new PrismaClient();
 
 export const command = {
     data: new SlashCommandBuilder()

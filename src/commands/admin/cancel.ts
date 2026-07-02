@@ -1,7 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../utils/db';
 
-const prisma = new PrismaClient();
 
 export const command = {
     data: new SlashCommandBuilder()
@@ -23,16 +22,9 @@ export const command = {
             return;
         }
 
-        // Delete Voice Channels
         if (interaction.guild) {
-            if (match.channelId1) {
-                const channel1 = interaction.guild.channels.cache.get(match.channelId1);
-                if (channel1) await channel1.delete().catch(console.error);
-            }
-            if (match.channelId2) {
-                const channel2 = interaction.guild.channels.cache.get(match.channelId2);
-                if (channel2) await channel2.delete().catch(console.error);
-            }
+            const { lobbyManager } = await import('../../managers/LobbyManager');
+            await lobbyManager.cleanupMatch(matchId, interaction.guild);
         }
 
         // Delete Match from DB (or set status to cancelled if we had a status field, but we'll delete for now)

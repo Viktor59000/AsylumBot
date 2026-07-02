@@ -396,6 +396,9 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                         queueMessageId: queueMessage.id, // Store message ID for updates
                     }
                 });
+
+                const { queueManager } = await import('../../managers/QueueManager');
+                queueManager.setChannel(selectedGame, queueChannel.id, guild.id);
             }
 
         } catch (error) {

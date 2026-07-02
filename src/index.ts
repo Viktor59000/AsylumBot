@@ -93,11 +93,26 @@ client.once('ready', async () => {
     const matchmaker = new Matchmaker(client);
     voteManager.setMatchmaker(matchmaker);
 
+    try {
+        const { prisma } = await import('./utils/db');
+        const gameConfigs = await prisma.gameConfig.findMany();
+        for (const cfg of gameConfigs) {
+            if (cfg.queueChannelId) {
+                queueManager.setChannel(cfg.game, cfg.queueChannelId, cfg.guildId);
+            }
+        }
+    } catch (err) {
+        console.error('[startup] Failed to load game configs:', err);
+    }
+
     queueManager.on('queueFull', async (game, players) => {
         const config = queueManager.getConfig(game);
-        if (!config) return;
+        if (!config || !config.channelId) {
+            console.error(`[queueFull] No channel bound for game "${game}".`);
+            return;
+        }
 
-        const channel = await client.channels.fetch(config.channelId) as any;
+        const channel = await client.channels.fetch(config.channelId).catch(() => null) as any;
         if (channel) {
             await readyCheckManager.startReadyCheck(game, players, channel);
         }
@@ -153,6 +168,23 @@ client.on('interactionCreate', async (interaction) => {
                 await spectatorManager.handleSpectateButton(interaction);
             } else if (interaction.customId.startsWith('afk_')) {
                 await afkManager.handleInteraction(interaction);
+            } else if (interaction.customId.startsWith('refresh_leaderboard_')) {
+                const game = interaction.customId.replace('refresh_leaderboard_', '');
+                await interaction.deferReply({ ephemeral: true });
+                const { LeaderboardManager } = await import('./managers/LeaderboardManager');
+                await new LeaderboardManager(client).updateLeaderboard(game);
+                await interaction.editReply({ content: '🔄 Leaderboard refreshed.' });
+            } else if (interaction.customId === 'rl_checkin') {
+                await interaction.reply({ content: `✅ **${interaction.user.username}** is checked in.`, ephemeral: false });
+            } else if (interaction.customId === 'match_report_win' || interaction.customId === 'match_cancel') {
+                const { lobbyManager } = await import('./managers/LobbyManager');
+                const lobby = lobbyManager.getLobby(interaction.channelId!);
+                const hint = lobby
+                    ? (interaction.customId === 'match_cancel'
+                        ? `Use \`/cancel match_id:${lobby.matchId}\` to cancel this match.`
+                        : `Use \`/reportwin match_id:${lobby.matchId} winning_team:<team1|team2>\` to report.`)
+                    : 'This match is no longer active.';
+                await interaction.reply({ content: `ℹ️ ${hint}`, ephemeral: true });
             }
         } else if (interaction.isStringSelectMenu()) {
             if (interaction.customId.startsWith('setup_')) {

@@ -16,6 +16,7 @@ export interface GameConfig {
     name: string;
     teamSize: number;
     channelId: string;
+    guildId?: string;
 }
 
 export class QueueManager extends EventEmitter {
@@ -38,6 +39,22 @@ export class QueueManager extends EventEmitter {
             this.queues.set(game, []);
         }
         return this.queues.get(game)!;
+    }
+
+    setChannel(game: string, channelId: string, guildId?: string) {
+        const existing = this.configs.get(game);
+        if (existing) {
+            existing.channelId = channelId;
+            if (guildId) existing.guildId = guildId;
+        } else {
+            const base = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS];
+            this.configs.set(game, {
+                name: base?.name ?? game,
+                teamSize: base?.teamSize ?? 5,
+                channelId,
+                guildId,
+            });
+        }
     }
 
     getAllQueues(): Collection<string, QueuePlayer[]> {

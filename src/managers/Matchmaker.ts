@@ -125,11 +125,27 @@ export class Matchmaker {
             }
         });
 
-        const guild = this.client.guilds.cache.get(lobby.players[0]?.user.id) || this.client.guilds.cache.first();
+        const guild = this.client.guilds.cache.get(lobby.guildId) || this.client.guilds.cache.first();
         if (guild) {
+            await this.grantTeamVoiceAccess(lobby, guild);
             await lobbyManager.onMatchReady(lobby, guild);
             await this.announceMatch(lobby, guild);
         }
+    }
+
+    async grantTeamVoiceAccess(lobby: any, guild: any) {
+        if (lobby.game === 'arena') return;
+        const grant = async (voiceId: string, users: User[]) => {
+            if (!voiceId) return;
+            const channel = guild.channels.cache.get(voiceId) ?? await guild.channels.fetch(voiceId).catch(() => null);
+            if (!channel) return;
+            for (const u of users) {
+                await channel.permissionOverwrites.edit(u.id, { ViewChannel: true, Connect: true, Speak: true })
+                    .catch((err: any) => console.error(`[grantTeamVoiceAccess] ${u.id}:`, err?.message));
+            }
+        };
+        await grant(lobby.voiceChannelId1, lobby.team1);
+        await grant(lobby.voiceChannelId2, lobby.team2);
     }
 
     async announceMatch(lobby: any, guild: any) {
