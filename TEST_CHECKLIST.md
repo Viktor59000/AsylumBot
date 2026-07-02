@@ -112,5 +112,41 @@ Serveur Discord de **test** (vide), bot lancé avec `npm run dev`. Coche au fur 
 
 ---
 
+## LOT 3 — Matchmaking réel (équilibrage Elo)
+
+### Pré-vol Lot 3
+- [ ] `git checkout lot-3-matchmaking` (pas de nouvelle migration) puis `npx tsc --noEmit` → 0 erreur
+- [ ] Fabriquer les ratings avec `/mmr user:@x game:rl mode:2v2 action:set amount:<n>` **avant** de lancer la file
+
+### A. ⭐ Équilibrage par Elo — comparer aux valeurs de référence
+> L'écart (« gap ») s'affiche dans l'annonce de match (`#in-progress`) : `⚖️ Avg Elo: Team 1 ⭐X vs Team 2 ⭐Y — gap Z`.
+
+| Scénario | Ratings (via /mmr set) | Attendu |
+|---|---|---|
+| RL **2v2**, 4 solos | 1200 / 1100 / 1000 / 900 | équipes **{1200+900} vs {1100+1000}**, avg 1050/1050, **gap 0** |
+| RL **3v3**, 6 solos | 1400 / 1200 / 1100 / 1000 / 900 / 800 | **{1400,1000,800} vs {1200,1100,900}**, avg 1067/1067, **gap 0** |
+| RL 3v3, **duo 1400+800** | mêmes ratings, le 1400 invite le 800 | même partition (duo ensemble), **gap 0** |
+| RL 2v2, **duo 1200+1100** | 1200/1100/1000/900, les deux hauts en duo | duo **non séparé** → {1200,1100} vs {1000,900}, **gap 200** (l'équilibre parfait est sacrifié au duo — attendu) |
+| force_start **impair** (5 joueurs) | 1300/1200/1000/900/800 | split 2v3, **gap ≈ 17** |
+| TFT **doubleup** 4 joueurs | 1300/1100/1000/600 | équipes {1300,600} vs {1100,1000} (annonce : ⭐950 vs ⭐1050) |
+
+- [ ] Scénario 2v2 « gap 0 » : la composition affichée correspond (le côté Team 1/Team 2 peut être inversé, c'est normal)
+- [ ] Scénario duo 1400+800 : le duo est ensemble ET le gap reste 0
+- [ ] Scénario duo 1200+1100 : gap 200 affiché — le duo n'est **jamais** séparé même si ça coûte l'équilibre
+- [ ] Vote **Random** : les équipes restent équilibrées ? Non — Random = pas ranked, mais l'équilibrage s'applique quand même (même code) : gap identique au vote Balanced
+
+### B. winStreak / highestRating
+- [ ] Gagner 2 matchs de suite avec le même joueur → `/stats` (vue du jeu) : **🔥 Streak: 2**
+- [ ] Perdre le 3ᵉ → **Streak: 0**
+- [ ] Monter au-dessus de son record (ex. /mmr set 900 puis gagner) → `highestRating` conserve le **plus haut atteint** (visible en base ; l'affichage UI arrive au Lot 5 badges)
+- [ ] Placement (TFT) : top moitié = win → streak s'incrémente aussi sur un 1ᵉʳ/2ᵉ sur 4
+
+### C. Non-régression
+- [ ] Annonce de match placement : chaque équipe affiche sa moyenne `Team i — ⭐X`
+- [ ] Draft (Captains) : le match s'annonce avec les moyennes des équipes **draftées** (pas d'équilibrage — choix humain, attendu)
+- [ ] Un cycle complet 2v2 + report + re-queue fonctionne comme avant
+
+---
+
 ## Comment reporter un bug ici
 Copie dans le chat : (1) ce que tu as fait, (2) ce qui était attendu, (3) ce qui s'est passé, (4) les **logs console** au moment du bug (masque tout secret). Je corrige avant de passer au lot suivant.

@@ -37,6 +37,8 @@ export class EloManager {
                     rating: newRating,
                     wins: { increment: win ? 1 : 0 },
                     losses: { increment: win ? 0 : 1 },
+                    winStreak: win ? { increment: 1 } : 0,
+                    highestRating: Math.max(existingElo.highestRating, newRating),
                 }
             });
         } else {
@@ -48,6 +50,8 @@ export class EloManager {
                     rating: newRating,
                     wins: win ? 1 : 0,
                     losses: win ? 0 : 1,
+                    winStreak: win ? 1 : 0,
+                    highestRating: Math.max(1000, newRating),
                     seasonId: null
                 }
             });
