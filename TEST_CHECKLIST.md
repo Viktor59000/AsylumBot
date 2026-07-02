@@ -40,11 +40,38 @@ Serveur Discord de **test** (vide), bot lancé avec `npm run dev`. Coche au fur 
 
 ---
 
-## LOT 1 — Multi-mode (à tester quand il sera codé)
-- [ ] `/setup` propose de choisir plusieurs **modes** → un salon de file par mode créé
-- [ ] Deux files du **même jeu** peuvent pop **en même temps** sans se mélanger
-- [ ] RL **1v1 / 2v2 / 3v3** ont chacun leur salon **et leur Elo séparé**
-- [ ] `/stats` montre l'Elo par (jeu, mode)
+## LOT 1 — Multi-mode + Party/Duo
+
+### Pré-vol Lot 1 (obligatoire — sinon fausses anomalies)
+- [ ] `git checkout lot-1-multimode` puis `npx prisma migrate deploy` → migration `lot1_multimode` appliquée
+- [ ] `npx tsc --noEmit` → 0 erreur (confirmation locale)
+- [ ] **Setup propre** : serveur vierge, OU supprimer les anciennes catégories/salons ET les lignes `GameConfig` du Lot 0 (`mode:"Ranked"` = ancien sens)
+  - *si tu testes par-dessus l'ancien setup* : boutons legacy sans mode + configs fantômes → incohérences qui ne sont PAS des bugs du Lot 1.
+
+### A. Setup multi-mode
+- [ ] `/setup` → **Rocket League** → étape « Select Queue Modes » en **multi-select** → cocher **1v1 + 2v2** → région → confirm
+- [ ] Salons créés : `#rl-1v1` et `#rl-2v2`, chacun avec son message de file à boutons (Join/Leave ; **pas de bouton Invite en 1v1**)
+- [ ] `#top-20` contient **2 messages leaderboard** (un par mode) avec chacun son bouton Refresh
+- [ ] Cliquer **Join** dans `#rl-1v1` → seul l'embed de `#rl-1v1` se met à jour (pas le 2v2)
+
+### B. ⭐ Parallélisme (LE test du Lot 1)
+- [ ] Remplir la file **1v1** (2 joueurs) et la file **2v2** (4 joueurs) quasi en même temps
+- [ ] **Deux ready-checks simultanés** apparaissent, chacun dans son salon, mentions correctes
+- [ ] Accepter les deux → **deux votes simultanés** → **deux matchs/lobbies simultanés** sans mélange de joueurs
+- [ ] Reporter les deux matchs → chaque Elo est crédité sur le **bon ladder** : `/stats` montre des lignes séparées `1v1` et `2v2`, `/leaderboard game:rl mode:1v1` ≠ `mode:2v2`
+  - *si ça casse (états croisés)* : ré-indexation par session en cause → me copier les logs + customIds des boutons.
+
+### C. Party/Duo (réparé au Lot 1)
+- [ ] Dans une file ≥ 2v2 : **Invite Duo/Trio** → le menu de sélection de joueur s'ouvre (plus de « interaction failed »)
+- [ ] Un **autre** joueur que l'invité clique Accept → refusé (« pas pour toi ») ; l'invité clique → il rejoint le groupe
+- [ ] Lancer le match (vote Balanced ou Random) → **le duo est dans la même équipe** — répéter **2-3 fois**
+- [ ] Inviter au-delà de la taille d'équipe (ex. 3ᵉ joueur dans un groupe en 2v2) → refus « groupe complet »
+
+### D. Cas limites
+- [ ] RL **1v1** en vote **Captains** → le match se finalise directement (pas de draft bloqué)
+- [ ] `/queue force_start game:rl mode:2v2` → pop la bonne file uniquement
+- [ ] `/mmr user:@x game:rl mode:1v1 action:add amount:50` → seul le ladder 1v1 bouge
+- [ ] Non-régression Lot 0 : **Ctrl+C en plein match** → relance → cleanup + `abandoned` + re-queue OK
 
 ---
 
