@@ -71,9 +71,10 @@ model Match {
   id        Int      @id @default(autoincrement())
   game      String
   mode      String   @default("soloq") // queue mode this match was played in
+  matchType String   @default("tvt") // 'tvt' (binary winner) or 'placement' (ranking 1→N)
   guildId   String?
   createdAt DateTime @default(now())
-  winner    String?  // 'team1' or 'team2'
+  winner    String?  // 'team1' or 'team2' (tvt) / first-placed team key (placement)
   map       String?
   isRanked  Boolean  @default(true)
   status    String   @default("pending") // pending, live, reported, cancelled, abandoned
@@ -90,10 +91,11 @@ model Match {
 model MatchPlayer {
   matchId   Int
   userId    String
-  team      String   // 'team1' or 'team2'
+  team      String   // 'team1'..'teamN'
   role      String?  // For LoL/Valorant
   kda       String?  // "K/D/A"
-  
+  placement Int?     // Final ranking of the player's team (placement matches: 1 = first)
+
   match     Match    @relation(fields: [matchId], references: [id])
   user      User     @relation(fields: [userId], references: [id])
 

@@ -177,6 +177,15 @@ export class ReadyCheckManager {
                 await queueManager.setPlayerState(p.user.id, 'IN_GAME');
             }
 
+            // Placement modes (Arena, TFT) have no team-formation vote:
+            // teams/entrants are assigned directly and ranked 1→N at report time.
+            const { getModeConfig } = await import('../utils/constants');
+            if (getModeConfig(game, mode)?.matchType === 'placement') {
+                const { getManagers } = await import('./registry');
+                await getManagers().matchmaker.createMatch(game, mode, matchPlayers, 'Ranked');
+                return;
+            }
+
             // Trigger Vote (same session id carries through the pipeline)
             await voteManager.startVote(sessionId, game, mode, matchPlayers, channel);
         }

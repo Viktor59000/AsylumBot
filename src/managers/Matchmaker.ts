@@ -1,4 +1,5 @@
 import { Client, TextChannel, Guild, User, ActionRowBuilder, ButtonBuilder, EmbedBuilder, ChannelType } from 'discord.js';
+import { getModeConfig } from '../utils/constants';
 import { draftManager } from './DraftManager';
 import { voteManager } from './VoteManager';
 import { lobbyManager } from './LobbyManager';
@@ -27,12 +28,16 @@ export class Matchmaker {
         const guild = (configGuildId && this.client.guilds.cache.get(configGuildId)) || this.client.guilds.cache.first();
         if (!guild) return;
 
+        const modeCfg = getModeConfig(game, mode);
+        const isPlacement = modeCfg?.matchType === 'placement';
+
         const match = await prisma.match.create({
             data: {
                 game,
                 mode,
+                matchType: isPlacement ? 'placement' : 'tvt',
                 guildId: guild.id,
-                isRanked: formation === 'Ranked',
+                isRanked: isPlacement ? true : formation === 'Ranked',
                 status: 'pending',
                 players: {
                     create: players.map(p => ({ userId: p.user.id, team: 'pending' })),
@@ -46,24 +51,43 @@ export class Matchmaker {
             p.user.send(`✅ **Match Found!** You have been removed from all other queues.`).catch(() => { });
         }
 
+        if (isPlacement) {
+            // Placement match: N teams ranked 1→N. Supports reduced rosters
+            // (force_start): the effective team count adapts to the headcount.
+            const teams = this.packIntoTeams(players, modeCfg!.teamSize);
+            const lobby = await lobbyManager.createLobby(guild, match.id, game, mode, players, 'Ranked', teams.length);
+            if (!lobby) return;
+            lobby.teams = teams.map(t => t.map(p => p.user));
+
+            await this.persistMatchChannels(match.id, lobby);
+            await this.finalizePlacementMatch(lobby);
+            return;
+        }
+
         const lobby = await lobbyManager.createLobby(guild, match.id, game, mode, players, formation);
         if (!lobby) return;
 
-        // Persist every match channel id right away so cleanup survives a restart (P1-2)
-        const allVoiceIds = [lobby.voiceChannelId1, lobby.voiceChannelId2, ...(lobby.extraVoiceChannelIds ?? [])].filter(Boolean);
-        await prisma.match.update({
-            where: { id: match.id },
-            data: {
-                textChannelId: lobby.textChannelId,
-                voiceChannelIds: JSON.stringify(allVoiceIds),
-            },
-        });
+        await this.persistMatchChannels(match.id, lobby);
 
         if (formation === 'Ranked' || formation === 'Casual') {
             await this.balanceTeams(lobby);
         } else if (formation === 'Captain') {
             await draftManager.startDraft(lobby);
         }
+    }
+
+    /** Persist every match channel id right away so cleanup survives a restart (P1-2). */
+    private async persistMatchChannels(matchId: number, lobby: any) {
+        const allVoiceIds = Array.from(new Set(
+            [lobby.voiceChannelId1, lobby.voiceChannelId2, ...(lobby.extraVoiceChannelIds ?? [])].filter(Boolean)
+        ));
+        await prisma.match.update({
+            where: { id: matchId },
+            data: {
+                textChannelId: lobby.textChannelId,
+                voiceChannelIds: JSON.stringify(allVoiceIds),
+            },
+        });
     }
 
     async balanceTeams(lobby: any) {
@@ -81,15 +105,9 @@ export class Matchmaker {
             // Future: Implement role matching algorithm using these roles
         }
 
-        if (lobby.game === 'arena') {
-            const shuffled = [...lobby.players].sort(() => 0.5 - Math.random());
-            lobby.team1 = shuffled.map((p: any) => p.user);
-            lobby.team2 = [];
-        } else {
-            const [team1, team2] = this.splitIntoTeams(lobby.players);
-            lobby.team1 = team1.map(p => p.user);
-            lobby.team2 = team2.map(p => p.user);
-        }
+        const [team1, team2] = this.splitIntoTeams(lobby.players);
+        lobby.team1 = team1.map(p => p.user);
+        lobby.team2 = team2.map(p => p.user);
 
         await this.finalizeMatch(lobby);
     }
@@ -98,11 +116,8 @@ export class Matchmaker {
      * Random team split that keeps duo/trio groups (groupId) in the same team.
      * Elo-based balancing replaces the random unit order in Lot 3.
      */
-    private splitIntoTeams(players: QueuePlayer[]): [QueuePlayer[], QueuePlayer[]] {
-        const team1Size = Math.floor(players.length / 2);
-        const team2Size = players.length - team1Size;
-
-        // Build indivisible units: one per group, one per solo
+    /** Indivisible units (one per duo/trio group, one per solo), shuffled then biggest-first. */
+    private buildShuffledUnits(players: QueuePlayer[]): QueuePlayer[][] {
         const byGroup = new Map<string, QueuePlayer[]>();
         const units: QueuePlayer[][] = [];
         for (const p of players) {
@@ -125,6 +140,40 @@ export class Matchmaker {
             [units[i], units[j]] = [units[j], units[i]];
         }
         units.sort((a, b) => b.length - a.length);
+        return units;
+    }
+
+    /**
+     * Placement matches: packs players into teams of `teamSize`, keeping groups
+     * together. Adapts to reduced rosters (force_start): at least 2 teams.
+     */
+    private packIntoTeams(players: QueuePlayer[], teamSize: number): QueuePlayer[][] {
+        const teamCount = Math.max(2, Math.ceil(players.length / teamSize));
+        const teams: QueuePlayer[][] = Array.from({ length: teamCount }, () => []);
+
+        for (const unit of this.buildShuffledUnits(players)) {
+            // Prefer the team with the most remaining space that still fits the unit
+            let target = teams
+                .filter(t => teamSize - t.length >= unit.length)
+                .sort((a, b) => a.length - b.length)[0];
+            if (target) {
+                target.push(...unit);
+            } else {
+                // Infeasible packing: split the group over the emptiest teams
+                for (const p of unit) {
+                    teams.sort((a, b) => a.length - b.length)[0].push(p);
+                }
+            }
+        }
+
+        return teams.filter(t => t.length > 0);
+    }
+
+    private splitIntoTeams(players: QueuePlayer[]): [QueuePlayer[], QueuePlayer[]] {
+        const team1Size = Math.floor(players.length / 2);
+        const team2Size = players.length - team1Size;
+
+        const units = this.buildShuffledUnits(players);
 
         const team1: QueuePlayer[] = [];
         const team2: QueuePlayer[] = [];
@@ -159,30 +208,54 @@ export class Matchmaker {
             where: { matchId: lobby.matchId }
         });
 
-        const matchPlayersData = [];
-
-        if (lobby.game === 'arena') {
-            const allUsers = lobby.team1;
-            for (let i = 0; i < allUsers.length; i++) {
-                const teamNum = Math.floor(i / 2) + 1;
-                matchPlayersData.push({
-                    matchId: lobby.matchId,
-                    userId: allUsers[i].id,
-                    team: `Team ${teamNum}`
-                });
-            }
-        } else {
-            matchPlayersData.push(
-                ...lobby.team1.map((u: User) => ({ matchId: lobby.matchId, userId: u.id, team: 'team1' })),
-                ...lobby.team2.map((u: User) => ({ matchId: lobby.matchId, userId: u.id, team: 'team2' }))
-            );
-        }
+        const matchPlayersData = [
+            ...lobby.team1.map((u: User) => ({ matchId: lobby.matchId, userId: u.id, team: 'team1' })),
+            ...lobby.team2.map((u: User) => ({ matchId: lobby.matchId, userId: u.id, team: 'team2' }))
+        ];
 
         await prisma.matchPlayer.createMany({
             data: matchPlayersData
         });
 
         const allUserIds = [...lobby.team1, ...lobby.team2].map(u => u.id);
+        await this.markMatchLive(lobby, allUserIds);
+
+        const guild = this.client.guilds.cache.get(lobby.guildId);
+        if (guild) {
+            await this.grantTeamVoiceAccess(lobby, guild);
+            await lobbyManager.onMatchReady(lobby, guild);
+            await this.announceMatch(lobby, guild);
+        }
+    }
+
+    /** Placement counterpart of finalizeMatch: N teams (`lobby.teams`) → team1..teamN. */
+    async finalizePlacementMatch(lobby: any) {
+        const teams: User[][] = lobby.teams ?? [];
+
+        await prisma.matchPlayer.deleteMany({
+            where: { matchId: lobby.matchId }
+        });
+
+        const matchPlayersData = teams.flatMap((team, i) =>
+            team.map(u => ({ matchId: lobby.matchId, userId: u.id, team: `team${i + 1}` }))
+        );
+
+        await prisma.matchPlayer.createMany({
+            data: matchPlayersData
+        });
+
+        const allUserIds = teams.flat().map(u => u.id);
+        await this.markMatchLive(lobby, allUserIds);
+
+        const guild = this.client.guilds.cache.get(lobby.guildId);
+        if (guild) {
+            await this.grantPlacementVoiceAccess(lobby, guild);
+            await lobbyManager.onMatchReady(lobby, guild);
+            await this.announceMatch(lobby, guild);
+        }
+    }
+
+    private async markMatchLive(lobby: any, allUserIds: string[]) {
         await prisma.elo.updateMany({
             where: { userId: { in: allUserIds }, game: lobby.game, mode: lobby.queueMode },
             data: { lastMatchDate: new Date() }
@@ -196,17 +269,9 @@ export class Matchmaker {
                 status: 'live'
             }
         });
-
-        const guild = this.client.guilds.cache.get(lobby.guildId);
-        if (guild) {
-            await this.grantTeamVoiceAccess(lobby, guild);
-            await lobbyManager.onMatchReady(lobby, guild);
-            await this.announceMatch(lobby, guild);
-        }
     }
 
     async grantTeamVoiceAccess(lobby: any, guild: any) {
-        if (lobby.game === 'arena') return;
         const grant = async (voiceId: string, users: User[]) => {
             if (!voiceId) return;
             const channel = guild.channels.cache.get(voiceId) ?? await guild.channels.fetch(voiceId).catch(() => null);
@@ -220,6 +285,33 @@ export class Matchmaker {
         await grant(lobby.voiceChannelId2, lobby.team2);
     }
 
+    /** Placement matches: shared layout → everyone in one channel; perTeam → team i → channel i. */
+    async grantPlacementVoiceAccess(lobby: any, guild: any) {
+        const teams: User[][] = lobby.teams ?? [];
+        const grant = async (voiceId: string, users: User[]) => {
+            if (!voiceId) return;
+            const channel = guild.channels.cache.get(voiceId) ?? await guild.channels.fetch(voiceId).catch(() => null);
+            if (!channel) return;
+            for (const u of users) {
+                await channel.permissionOverwrites.edit(u.id, { ViewChannel: true, Connect: true, Speak: true })
+                    .catch((err: any) => console.error(`[grantPlacementVoiceAccess] ${u.id}:`, err?.message));
+            }
+        };
+
+        const layout = getModeConfig(lobby.game, lobby.queueMode)?.voiceLayout ?? 'perTeam';
+        if (layout === 'shared') {
+            await grant(lobby.voiceChannelId1, teams.flat());
+            return;
+        }
+
+        const allVoiceIds: string[] = Array.from(new Set(
+            [lobby.voiceChannelId1, lobby.voiceChannelId2, ...(lobby.extraVoiceChannelIds ?? [])].filter(Boolean)
+        ));
+        for (let i = 0; i < teams.length; i++) {
+            await grant(allVoiceIds[i], teams[i]);
+        }
+    }
+
     async announceMatch(lobby: any, guild: any) {
         const channel = guild.channels.cache.find((c: any) => c.name === 'matches' || c.name === 'match-logs' || c.name === 'in-progress');
         if (!channel || !channel.isTextBased()) return;
@@ -227,13 +319,21 @@ export class Matchmaker {
         const queueName = queueManager.getConfig(lobby.game, lobby.queueMode)?.name ?? lobby.game.toUpperCase();
         const embed = new EmbedBuilder()
             .setTitle(`⚔️ ${queueName} Match Started!`)
-            .setDescription(`**Match ID:** #${lobby.matchId}\n**Mode:** ${lobby.mode}`)
-            .addFields(
-                { name: 'Team 1', value: lobby.team1.map((u: any) => u.username).join('\n') || 'TBD', inline: true },
-                { name: 'Team 2', value: lobby.team2.map((u: any) => u.username).join('\n') || 'TBD', inline: true }
-            )
             .setColor('Green')
             .setTimestamp();
+
+        if (lobby.teams && lobby.teams.length > 0) {
+            embed.setDescription(`**Match ID:** #${lobby.matchId}\n**Format:** ranking 1→${lobby.teams.length}`);
+            lobby.teams.forEach((team: User[], i: number) => {
+                embed.addFields({ name: `Team ${i + 1}`, value: team.map(u => u.username).join('\n') || 'TBD', inline: true });
+            });
+        } else {
+            embed.setDescription(`**Match ID:** #${lobby.matchId}\n**Mode:** ${lobby.mode}`);
+            embed.addFields(
+                { name: 'Team 1', value: lobby.team1.map((u: any) => u.username).join('\n') || 'TBD', inline: true },
+                { name: 'Team 2', value: lobby.team2.map((u: any) => u.username).join('\n') || 'TBD', inline: true }
+            );
+        }
 
         const spectateBtn = spectatorManager.createSpectateButton(lobby.textChannelId);
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(spectateBtn);

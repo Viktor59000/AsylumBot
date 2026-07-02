@@ -75,5 +75,42 @@ Serveur Discord de **test** (vide), bot lancé avec `npm run dev`. Coche au fur 
 
 ---
 
+## LOT 2 — Roster complet (Arena 6×3, TFT, moteur placement)
+
+### Pré-vol Lot 2
+- [ ] `git checkout lot-2-roster` puis `npx prisma migrate deploy` → migration `lot2_placement` appliquée
+- [ ] `npx tsc --noEmit` → 0 erreur
+- [ ] ⚠️ Le mode Arena a changé de clé (`soloq` → `6x3`) : **supprime l'ancienne catégorie Arena + ses lignes `GameConfig`** si tu l'avais setup avant, puis refais `/setup`.
+
+### A. Setup des nouveaux jeux
+- [ ] `/setup` → **LoL Arena** → le mode proposé est **« Arena 6×3 — 6 teams of 3 — ranking 1→6 »** → salon `#arena-6x3` créé
+- [ ] `/setup` → **Teamfight Tactics** → modes **Solo (FFA 8)** et **Double Up** en multi-select → salons `#tft-solo` et `#tft-doubleup`
+- [ ] RL 1v1/2v2/3v3 : rien n'a bougé (non-régression Lot 1) — un join dans `#rl-1v1` marche toujours
+
+### B. ⭐ Moteur placement en effectif réduit (testable à 2-3 joueurs)
+- [ ] 2-3 joueurs rejoignent `#tft-solo` (chacun doit avoir `/ign game:tft` au format `Name#Tag`)
+- [ ] `/queue force_start game:tft mode:solo` → ready-check → **PAS de vote de formation** → lobby direct
+- [ ] Le lobby liste **une « team » par joueur** (Team 1, Team 2, …) + **un seul salon vocal partagé** (« Lobby ») accessible à tous
+- [ ] L'embed du lobby explique le report : `/reportplacement match_id:<id> ranking:...`
+- [ ] `/reportplacement match_id:<id> ranking:2,1` (ou `2,1,3` à 3) → embed de résultats avec 🥇🥈 + **Δ Elo par joueur** (le 1ᵉʳ gagne plus que le 2ᵉ, le dernier perd)
+- [ ] **Placement partiel** : à 3 joueurs, `ranking:3,1` → Team 2 listée « Unranked (no Elo change) », son Elo n'a pas bougé (`/stats`)
+- [ ] Salons supprimés après report, **re-queue immédiat** possible
+- [ ] `/leaderboard game:tft mode:solo` affiche le ladder ; `/stats` montre la ligne `solo`
+
+### C. Arena 6×3 (effectif réduit)
+- [ ] 2-4 joueurs dans `#arena-6x3` (IGN `game:arena`) → `force_start` → équipes de ≤3 réparties en **≥2 équipes**, **un vocal par équipe** (limite 3), chacun ne peut rejoindre que le sien
+- [ ] `/reportplacement` avec le classement des équipes → Elo OK, cleanup OK
+- [ ] (Si 18 comptes un jour : pop auto à 18 → 6 équipes de 3 → report 1→6)
+
+### D. Garde-fous & croisements
+- [ ] `/reportwin` sur un match placement → refusé avec le message « use /reportplacement »
+- [ ] `/reportplacement` sur un match RL/5v5 (tvt) → refusé avec « use /reportwin »
+- [ ] `ranking` invalide : équipe inexistante (`9,1`), doublon (`1,1`), une seule équipe (`1`) → messages d'erreur clairs, rien n'est écrit
+- [ ] Deuxième `/reportplacement` sur le même match → « already reported »
+- [ ] TFT **Double Up** : duo invité (Invite Duo/Trio) → `force_start` à 3-4 joueurs → **le duo est dans la même équipe**
+- [ ] Ctrl+C en plein match placement → relance → salons nettoyés, match `abandoned`, re-queue OK
+
+---
+
 ## Comment reporter un bug ici
 Copie dans le chat : (1) ce que tu as fait, (2) ce qui était attendu, (3) ce qui s'est passé, (4) les **logs console** au moment du bug (masque tout secret). Je corrige avant de passer au lot suivant.

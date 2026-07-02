@@ -10,8 +10,14 @@ The bot supports Elo tracking and matchmaking per **(game, mode)** — each enab
 *   🛡️ **Rainbow Six Siege** — `soloq`
 *   ⚔️ **League of Legends** — `soloq` (with OP.GG Integration)
 *   🎯 **Valorant** — `soloq`
+*   🏟️ **LoL Arena** — `6x3`: 6 teams of 3 (18 players), **placement** match ranked 1→6
+*   ♟️ **Teamfight Tactics** — `solo` (FFA 8, ranked 1→8) and `doubleup` (4 duos, ranked 1→4), **placement**
 
 `/setup` lets you pick which modes to enable per game (multi-select). Several matches of the same game can run in parallel across modes.
+
+**Two result engines** (`matchType`):
+*   `tvt` — two teams, binary winner → `/reportwin`
+*   `placement` — N teams ranked 1→N → `/reportplacement match_id:<id> ranking:3,1,4,2` (partial rankings accepted; Elo scales with placement vs the field). Placement modes skip the team-formation vote.
 
 ---
 
@@ -82,7 +88,8 @@ The bot supports Elo tracking and matchmaking per **(game, mode)** — each enab
 *   `/season`: Manage seasons.
 
 #### Moderation & Match Management
-*   `/reportwin <match_id> <winning_team>`: Report a match result.
+*   `/reportwin <match_id> <winning_team>`: Report a team-vs-team match result.
+*   `/reportplacement <match_id> <ranking>`: Report a placement match (e.g. `ranking:3,1,4,2`, partial allowed).
 *   `/sub <match_id> <old_user> <new_user>`: Substitute a player in an active match.
 *   `/cancel <match_id>`: Cancel a match without Elo loss.
 *   `/suspend <user> <duration> <reason>`: Temporarily ban a user from the queue.

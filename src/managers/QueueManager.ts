@@ -1,6 +1,6 @@
 import { Collection, User } from 'discord.js';
 import { EventEmitter } from 'events';
-import { GAME_CONFIGS, GAME_MODES, getModeConfig, queueKey, parseQueueKey } from '../utils/constants';
+import { GAME_CONFIGS, GAME_MODES, MatchType, getModeConfig, queueKey, parseQueueKey } from '../utils/constants';
 import { t, Language } from '../utils/i18n';
 import { UserManager } from './UserManager';
 
@@ -17,6 +17,8 @@ export interface QueueConfig {
     mode: string;
     name: string;      // Display name, e.g. "Rocket League 1v1"
     teamSize: number;
+    teamCount: number;
+    matchType: MatchType;
     channelId: string;
     guildId?: string;
     queueMessageId?: string;
@@ -44,6 +46,8 @@ export class QueueManager extends EventEmitter {
                     mode,
                     name: `${gameName} ${modeCfg.name}`,
                     teamSize: modeCfg.teamSize,
+                    teamCount: modeCfg.teamCount,
+                    matchType: modeCfg.matchType,
                     channelId: '',
                 });
             }
@@ -73,6 +77,8 @@ export class QueueManager extends EventEmitter {
                 mode,
                 name: `${gameName} ${modeCfg?.name ?? mode}`,
                 teamSize: modeCfg?.teamSize ?? 5,
+                teamCount: modeCfg?.teamCount ?? 2,
+                matchType: modeCfg?.matchType ?? 'tvt',
                 channelId,
                 guildId,
                 queueMessageId,
@@ -207,12 +213,12 @@ export class QueueManager extends EventEmitter {
         const queue = this.getQueue(game, mode);
         const config = this.configs.get(queueKey(game, mode));
         if (!config) return false;
-        return queue.length >= config.teamSize * 2;
+        return queue.length >= config.teamSize * config.teamCount;
     }
 
     getRequiredPlayers(game: string, mode: string): number {
         const config = this.configs.get(queueKey(game, mode));
-        return config ? config.teamSize * 2 : 0;
+        return config ? config.teamSize * config.teamCount : 0;
     }
 
     clearQueue(game: string, mode: string) {

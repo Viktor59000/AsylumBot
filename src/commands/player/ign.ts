@@ -24,8 +24,8 @@ export const command = {
         const pseudo = interaction.options.getString('pseudo', true);
         const userId = interaction.user.id;
 
-        // Validation for Riot Games (LoL, Valorant)
-        if (game === 'lol' || game === 'valorant') {
+        // Validation for Riot Games (LoL, Valorant, Arena, TFT)
+        if (game === 'lol' || game === 'valorant' || game === 'arena' || game === 'tft') {
             if (!pseudo.includes('#')) {
                 await interaction.reply({
                     content: `❌ Invalid format for **${GAME_CONFIGS[game as keyof typeof GAME_CONFIGS].name}**.\nPlease use the Riot ID format: \`Name#Tag\` (e.g., \`Faker#KR1\`).`,

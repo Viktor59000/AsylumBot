@@ -13,6 +13,7 @@ import { command as clanClan } from './clan/clan';
 import { command as generalHelp } from './general/help';
 import { command as leaderboard } from './leaderboard';
 import { command as matchReport } from './match/report';
+import { command as matchReportPlacement } from './match/reportplacement';
 import { command as playerChallenges } from './player/challenges';
 import { command as playerIgn } from './player/ign';
 import { command as playerSetProfile } from './player/setProfile';
@@ -37,6 +38,7 @@ export const allCommands = [
     generalHelp,
     leaderboard,
     matchReport,
+    matchReportPlacement,
     playerChallenges,
     playerIgn,
     playerSetProfile,

@@ -14,13 +14,14 @@ import { QueuePlayer } from './QueueManager';
 import { LoLStrategy } from '../strategies/LoLStrategy';
 import { CS2Strategy } from '../strategies/CS2Strategy';
 import { RLStrategy } from '../strategies/RLStrategy';
-import { ArenaStrategy } from '../strategies/ArenaStrategy';
+import { PlacementStrategy } from '../strategies/PlacementStrategy';
 import { GameStrategy } from '../strategies/GameStrategy';
+import { getModeConfig } from '../utils/constants';
 
 export interface LobbyState {
     matchId: number;
     game: string;
-    queueMode: string; // queue mode: 'soloq', '1v1', '2v2', '3v3', ...
+    queueMode: string; // queue mode: 'soloq', '1v1', '6x3', 'solo', ...
     guildId: string;
     textChannelId: string;
     voiceChannelId1: string;
@@ -29,7 +30,8 @@ export interface LobbyState {
     players: QueuePlayer[];
     team1: User[];
     team2: User[];
-    mode: 'Ranked' | 'Captain' | 'Casual'; // team formation
+    teams?: User[][]; // placement matches: index i = `team${i+1}`
+    mode: 'Ranked' | 'Captain' | 'Casual'; // team formation (tvt only)
 }
 
 export class LobbyManager {
@@ -44,7 +46,8 @@ export class LobbyManager {
         this.strategies.set('valorant', new CS2Strategy());
         this.strategies.set('r6s', new CS2Strategy());
         this.strategies.set('rl', new RLStrategy());
-        this.strategies.set('arena', new ArenaStrategy());
+        this.strategies.set('arena', new PlacementStrategy());
+        this.strategies.set('tft', new PlacementStrategy());
     }
 
     async createLobby(
@@ -53,7 +56,8 @@ export class LobbyManager {
         game: string,
         queueMode: string,
         players: QueuePlayer[],
-        mode: 'Ranked' | 'Captain' | 'Casual'
+        mode: 'Ranked' | 'Captain' | 'Casual',
+        teamCountOverride?: number // placement matches with reduced roster (force_start)
     ): Promise<LobbyState | null> {
 
         // 1. Find or Create Category
@@ -82,32 +86,39 @@ export class LobbyManager {
             ],
         });
 
-        // 3. Create Voice Channels (Refactored for Arena Support)
+        // 3. Create Voice Channels (layout driven by the mode config)
         const voiceChannels: string[] = [];
-        const isArena = game === 'arena';
+        const modeCfg = getModeConfig(game, queueMode);
+        const teamSize = modeCfg?.teamSize ?? 5;
+        const voiceLayout = modeCfg?.voiceLayout ?? 'perTeam';
+        const teamCount = teamCountOverride ?? modeCfg?.teamCount ?? 2;
 
-        let teamCount = 2;
-        if (isArena) teamCount = 8;
+        const voiceSpecs: { name: string; limit: number }[] = [];
+        if (voiceLayout === 'shared') {
+            // Single shared voice channel (e.g. TFT Solo)
+            voiceSpecs.push({ name: `Match #${matchId} - Lobby`, limit: Math.max(players.length, teamSize * teamCount) });
+        } else if (teamCount === 2) {
+            voiceSpecs.push({ name: `Match #${matchId} - Blue`, limit: teamSize });
+            voiceSpecs.push({ name: `Match #${matchId} - Red`, limit: teamSize });
+        } else {
+            for (let i = 1; i <= teamCount; i++) {
+                voiceSpecs.push({ name: `Match #${matchId} - Team ${i}`, limit: teamSize });
+            }
+        }
 
-        const { queueManager } = await import('./QueueManager');
-        const teamSize = queueManager.getConfig(game, queueMode)?.teamSize ?? 5;
-
-        for (let i = 1; i <= teamCount; i++) {
-            const channelName = isArena ? `Match #${matchId} - Team ${i}` : (i === 1 ? `Match #${matchId} - Blue` : `Match #${matchId} - Red`);
-            const limit = isArena ? 2 : teamSize;
-
+        for (const spec of voiceSpecs) {
             const channel = await guild.channels.create({
-                name: channelName,
+                name: spec.name,
                 type: ChannelType.GuildVoice,
                 parent: category.id,
-                userLimit: limit,
+                userLimit: spec.limit,
                 permissionOverwrites: [
                     {
                         id: guild.id,
                         deny: [PermissionFlagsBits.Connect], // Locked by default
                         allow: [PermissionFlagsBits.ViewChannel] // Visible but locked
                     },
-                    // Specific team overwrites will be added by Matchmaker/Strategy later
+                    // Specific team overwrites are added by Matchmaker once teams are known
                 ],
             });
             voiceChannels.push(channel.id);
@@ -120,7 +131,7 @@ export class LobbyManager {
             guildId: guild.id,
             textChannelId: textChannel.id,
             voiceChannelId1: voiceChannels[0],
-            voiceChannelId2: voiceChannels[1],
+            voiceChannelId2: voiceChannels[1] ?? voiceChannels[0], // shared layout has a single channel
             extraVoiceChannelIds: voiceChannels.slice(2),
             players,
             team1: [],

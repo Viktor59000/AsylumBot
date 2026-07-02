@@ -31,6 +31,11 @@ export const command = {
             return;
         }
 
+        if (match.matchType === 'placement') {
+            await interaction.reply({ content: 'This is a placement match — use `/reportplacement` with the ranking instead.', ephemeral: true });
+            return;
+        }
+
         if (match.winner) {
             await interaction.reply({ content: 'Match already reported.', ephemeral: true });
             return;

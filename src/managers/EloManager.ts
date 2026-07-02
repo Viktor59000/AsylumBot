@@ -59,4 +59,18 @@ export class EloManager {
         const expectedScore = 1 / (1 + Math.pow(10, (opponentRating - currentRating) / 400));
         return Math.round(currentRating + K * (result - expectedScore));
     }
+
+    /**
+     * Placement Elo (DESIGN §1bis) for matches ranked 1→N.
+     * score = (N − placement)/(N − 1) ∈ [0,1] (1st → 1, last → 0),
+     * expected = logistic vs the field's average rating, Δ = K × (score − expected).
+     * Works for any N ≥ 2 (partial rankings use N = number of placed teams).
+     */
+    static calculatePlacementDelta(rating: number, fieldAvgRating: number, placement: number, totalTeams: number): number {
+        if (totalTeams < 2) return 0;
+        const K = 32;
+        const score = (totalTeams - placement) / (totalTeams - 1);
+        const expected = 1 / (1 + Math.pow(10, (fieldAvgRating - rating) / 400));
+        return Math.round(K * (score - expected));
+    }
 }

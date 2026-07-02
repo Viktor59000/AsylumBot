@@ -120,7 +120,9 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
         const options = Object.entries(modes).map(([key, cfg]) => ({
             label: cfg.name,
             value: key,
-            description: `Teams of ${cfg.teamSize} (${cfg.teamSize * 2} players per match)`,
+            description: cfg.matchType === 'placement'
+                ? `${cfg.teamCount} ${cfg.teamSize === 1 ? 'players (FFA)' : `teams of ${cfg.teamSize}`} — ranking 1→${cfg.teamCount}`
+                : `Teams of ${cfg.teamSize} (${cfg.teamSize * cfg.teamCount} players per match)`,
         }));
 
         const select = new StringSelectMenuBuilder()

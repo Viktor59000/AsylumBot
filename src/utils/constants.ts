@@ -42,43 +42,61 @@ export const GAME_CONFIGS = {
     },
     arena: {
         name: 'LoL Arena',
-        teamSize: 8, // 16 players total, but teamSize usually means "Players per Side" in core logic?
-        // Wait, core logic is queue.length >= teamSize * 2. 
-        // If we want 16 players, teamSize should be 8.
+        teamSize: 3,
         thumbnail: BOT_ICON,
         emoji: '🏟️',
     },
+    tft: {
+        name: 'Teamfight Tactics',
+        teamSize: 1,
+        thumbnail: BOT_ICON,
+        emoji: '♟️',
+    },
 };
 
-// ---- Multi-mode (Lot 1) ----
+// ---- Multi-mode (Lot 1) + match types (Lot 2) ----
 // Each game exposes one or more queue modes. A mode = its own queue channel,
 // its own Elo ladder (Elo key: userId+game+mode+season) and its own matches.
+//
+// matchType drives the result engine (DESIGN §1bis):
+//  - 'tvt'       → 2 teams, binary winner, /reportwin
+//  - 'placement' → N teams ranked 1→N, /reportplacement, Elo by placement
+
+export type MatchType = 'tvt' | 'placement';
 
 export interface ModeConfig {
-    name: string;      // Display name ("SoloQ", "1v1", ...)
-    teamSize: number;  // Players per team (queue pops at teamSize * 2, arena excepted)
+    name: string;          // Display name ("SoloQ", "1v1", "Arena 6×3", ...)
+    teamSize: number;      // Players per team (1 = FFA entrant)
+    teamCount: number;     // Teams per match (queue pops at teamSize × teamCount)
+    matchType: MatchType;
+    voiceLayout: 'perTeam' | 'shared'; // one voice channel per team, or a single shared one
 }
 
 export const GAME_MODES: Record<string, Record<string, ModeConfig>> = {
     rl: {
-        '1v1': { name: '1v1', teamSize: 1 },
-        '2v2': { name: '2v2', teamSize: 2 },
-        '3v3': { name: '3v3', teamSize: 3 },
+        '1v1': { name: '1v1', teamSize: 1, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
+        '2v2': { name: '2v2', teamSize: 2, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
+        '3v3': { name: '3v3', teamSize: 3, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
     },
     cs2: {
-        soloq: { name: 'SoloQ', teamSize: 5 },
+        soloq: { name: 'SoloQ', teamSize: 5, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
     },
     r6s: {
-        soloq: { name: 'SoloQ', teamSize: 5 },
+        soloq: { name: 'SoloQ', teamSize: 5, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
     },
     lol: {
-        soloq: { name: 'SoloQ', teamSize: 5 },
+        soloq: { name: 'SoloQ', teamSize: 5, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
     },
     valorant: {
-        soloq: { name: 'SoloQ', teamSize: 5 },
+        soloq: { name: 'SoloQ', teamSize: 5, teamCount: 2, matchType: 'tvt', voiceLayout: 'perTeam' },
     },
     arena: {
-        soloq: { name: 'Arena', teamSize: 8 }, // 16 players, 8 duos (reworked to 6x3 in Lot 2)
+        // Inhouse-specific format: 6 teams of 3 (18 players), ranked 1→6
+        '6x3': { name: 'Arena 6×3', teamSize: 3, teamCount: 6, matchType: 'placement', voiceLayout: 'perTeam' },
+    },
+    tft: {
+        solo: { name: 'Solo (FFA 8)', teamSize: 1, teamCount: 8, matchType: 'placement', voiceLayout: 'shared' },
+        doubleup: { name: 'Double Up', teamSize: 2, teamCount: 4, matchType: 'placement', voiceLayout: 'perTeam' },
     },
 };
 
