@@ -35,11 +35,16 @@ async function generateGeneralStats(targetUser: User) {
             iconURL: userWithClan?.clan?.imageUrl || 'https://i.imgur.com/AfFp7pu.png'
         });
 
-    // Add summary for each game
+    // Add summary for each game (one line per mode ladder)
     const gameFields = Object.entries(GAME_CONFIGS).map(([key, config]) => {
-        const elo = userWithClan?.elo.find(e => e.game === key);
-        const rating = elo?.rating || 1000;
-        return { name: config.name, value: `${config.emoji} ${rating} Elo (${getRank(rating)})`, inline: false };
+        const elos = userWithClan?.elo.filter(e => e.game === key) ?? [];
+        if (elos.length === 0) {
+            return { name: config.name, value: `${config.emoji} 1000 Elo (${getRank(1000)})`, inline: false };
+        }
+        const value = elos
+            .map(e => `${config.emoji} **${e.mode}** — ${e.rating} Elo (${getRank(e.rating)})`)
+            .join('\n');
+        return { name: config.name, value, inline: false };
     });
 
     embed.addFields(gameFields);
@@ -61,7 +66,7 @@ async function generateGameStats(targetUser: User, game: string) {
         orderBy: { seasonId: 'desc' },
     });
 
-    const activeElo = eloRecords.find(e => e.seasonId === null);
+    const activeElos = eloRecords.filter(e => e.seasonId === null);
     const historyElos = eloRecords.filter(e => e.seasonId !== null);
 
     const ignRecord = await prisma.userIgn.findUnique({
@@ -69,12 +74,6 @@ async function generateGameStats(targetUser: User, game: string) {
     });
 
     const ign = ignRecord?.ign || 'Not set';
-    const rating = activeElo?.rating || 1000;
-    const wins = activeElo?.wins || 0;
-    const losses = activeElo?.losses || 0;
-    const winStreak = activeElo?.winStreak || 0;
-    const winRate = wins + losses > 0 ? Math.round((wins / (wins + losses)) * 100) : 0;
-    const rank = getRank(rating);
 
     const embed = new EmbedBuilder()
         .setTitle(`${config.name} Stats`)
@@ -82,21 +81,29 @@ async function generateGameStats(targetUser: User, game: string) {
         .setColor(COLORS.ASYLUM_GOLD as any)
         .setThumbnail(targetUser.displayAvatarURL())
         .setDescription(`**IGN:** \`${ign}\`\n**Clan:** 🛡️ ${userWithClan?.clan?.name || 'No Clan'}`)
-        .addFields(
-            { name: 'Rank', value: `🏆 ${rank}`, inline: true },
-            { name: 'Elo', value: `⭐ ${rating}`, inline: true },
-            { name: 'Winrate', value: `📊 ${winRate}% (${wins}W - ${losses}L)`, inline: true },
-            { name: 'Win Streak', value: `🔥 ${winStreak}`, inline: true },
-        )
         .setFooter({
             text: userWithClan?.clan ? `Member of ${userWithClan.clan.name}` : 'ASYLUM ELO HUB',
             iconURL: userWithClan?.clan?.imageUrl || 'https://i.imgur.com/AfFp7pu.png'
         });
 
+    // One block per mode ladder (each mode has its own Elo)
+    if (activeElos.length === 0) {
+        embed.addFields({ name: 'Unranked', value: `🏆 ${getRank(1000)} • ⭐ 1000 Elo • no matches yet`, inline: false });
+    } else {
+        for (const elo of activeElos) {
+            const winRate = elo.wins + elo.losses > 0 ? Math.round((elo.wins / (elo.wins + elo.losses)) * 100) : 0;
+            embed.addFields({
+                name: `Mode: ${elo.mode}`,
+                value: `🏆 ${getRank(elo.rating)} • ⭐ ${elo.rating} Elo\n📊 ${winRate}% (${elo.wins}W - ${elo.losses}L) • 🔥 Streak: ${elo.winStreak}`,
+                inline: false
+            });
+        }
+    }
+
     if (historyElos.length > 0) {
         const historyString = historyElos.map(e => {
             const seasonName = e.season?.name || 'Unknown Season';
-            return `**${seasonName}:** ${e.rating} Elo (${e.wins}W-${e.losses}L)`;
+            return `**${seasonName}** (${e.mode}): ${e.rating} Elo (${e.wins}W-${e.losses}L)`;
         }).join('\n');
         embed.addFields({ name: '📜 Season History', value: historyString });
     }

@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { prisma } from '../utils/db';
 import { createLeaderboardEmbed } from '../utils/embeds';
+import { GAME_MODES, ALL_MODE_KEYS, getDefaultMode, getModeConfig } from '../utils/constants';
 
 
 export const command = {
@@ -22,6 +23,12 @@ export const command = {
         )
         .addStringOption((option) =>
             option
+                .setName('mode')
+                .setDescription('The queue mode (default: first mode of the game)')
+                .addChoices(...ALL_MODE_KEYS.map(m => ({ name: m, value: m }))),
+        )
+        .addStringOption((option) =>
+            option
                 .setName('sort')
                 .setDescription('Sort by')
                 .addChoices(
@@ -31,14 +38,20 @@ export const command = {
         ),
     async execute(interaction: ChatInputCommandInteraction) {
         const game = interaction.options.getString('game', true);
+        const mode = interaction.options.getString('mode') ?? getDefaultMode(game);
         const sort = interaction.options.getString('sort') || 'rating';
+
+        if (!getModeConfig(game, mode)) {
+            await interaction.reply({ content: `❌ Invalid mode **${mode}** for this game. Valid modes: ${Object.keys(GAME_MODES[game] ?? {}).join(', ')}`, ephemeral: true });
+            return;
+        }
 
         const ITEMS_PER_PAGE = 10;
         let currentPage = 1;
 
         const fetchPlayers = async (page: number) => {
             return await prisma.elo.findMany({
-                where: { game },
+                where: { game, mode },
                 orderBy: { [sort]: 'desc' },
                 skip: (page - 1) * ITEMS_PER_PAGE,
                 take: ITEMS_PER_PAGE,
@@ -46,11 +59,11 @@ export const command = {
             });
         };
 
-        const totalPlayers = await prisma.elo.count({ where: { game } });
+        const totalPlayers = await prisma.elo.count({ where: { game, mode } });
         const totalPages = Math.ceil(totalPlayers / ITEMS_PER_PAGE) || 1;
 
         let players = await fetchPlayers(currentPage);
-        let { embed, files } = createLeaderboardEmbed(game, players, currentPage, totalPages);
+        let { embed, files } = createLeaderboardEmbed(game, mode, players, currentPage, totalPages);
 
         const getRow = (page: number) => {
             return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -91,7 +104,7 @@ export const command = {
             }
 
             players = await fetchPlayers(currentPage);
-            const result = createLeaderboardEmbed(game, players, currentPage, totalPages);
+            const result = createLeaderboardEmbed(game, mode, players, currentPage, totalPages);
             embed = result.embed;
             files = result.files;
 

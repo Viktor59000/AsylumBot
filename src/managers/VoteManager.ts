@@ -4,28 +4,30 @@ import {
     ButtonStyle,
     EmbedBuilder,
     Interaction,
-    TextChannel,
-    User,
-    Message,
-    ComponentType
+    TextChannel
 } from 'discord.js';
 import { QueuePlayer } from './QueueManager';
-import { COLORS, GAME_CONFIGS, BOT_ICON } from '../utils/constants';
-import { draftManager } from './DraftManager';
+import { queueManager } from './QueueManager';
 import { Matchmaker } from './Matchmaker';
 
 interface VoteState {
+    sessionId: string;
     game: string;
+    mode: string;
     players: QueuePlayer[];
-    votes: Map<string, string>; // UserId -> Vote (Mode or Game)
+    votes: Map<string, string>; // UserId -> Vote (Formation or Game)
     messageId?: string;
     channelId: string;
     endTime: number;
     timer?: NodeJS.Timeout;
 }
 
+/**
+ * Votes are indexed by SESSION id (not by game): with multi-mode, several
+ * votes of the same game can run concurrently without collision.
+ */
 export class VoteManager {
-    private votes: Map<string, VoteState> = new Map(); // Key: game
+    private votes: Map<string, VoteState> = new Map(); // Key: sessionId
     private matchmaker?: Matchmaker;
 
     constructor() { }
@@ -34,37 +36,31 @@ export class VoteManager {
         this.matchmaker = matchmaker;
     }
 
-    async startVote(game: string, players: QueuePlayer[], channel: TextChannel) {
-        // Cancel any stale vote for this game so its timer can't fire on the new one
-        const existing = this.votes.get(game);
+    async startVote(sessionId: string, game: string, mode: string, players: QueuePlayer[], channel: TextChannel) {
+        // Cancel any stale vote for this session so its timer can't fire on the new one
+        const existing = this.votes.get(sessionId);
         if (existing?.timer) clearTimeout(existing.timer);
 
         const endTime = Date.now() + 30000; // 30 seconds
         const state: VoteState = {
+            sessionId,
             game,
+            mode,
             players,
             votes: new Map(),
             channelId: channel.id,
             endTime
         };
 
-        this.votes.set(game, state);
+        this.votes.set(sessionId, state);
         await this.sendVoteEmbed(state, channel);
 
         // Start Timer (stored so it can be cancelled)
-        state.timer = setTimeout(() => this.endVote(game), 30000);
+        state.timer = setTimeout(() => this.endVote(sessionId), 30000);
     }
 
     async sendVoteEmbed(state: VoteState, channel: TextChannel) {
-        const config = GAME_CONFIGS[state.game as keyof typeof GAME_CONFIGS];
-
-        // Count votes
-        let balanced = 0, captain = 0, random = 0;
-        state.votes.forEach(v => {
-            if (v === 'balanced') balanced++;
-            if (v === 'captain') captain++;
-            if (v === 'random') random++;
-        });
+        const queueName = queueManager.getConfig(state.game, state.mode)?.name ?? state.game;
 
         const total = state.players.length;
         const voted = state.votes.size;
@@ -96,15 +92,15 @@ export class VoteManager {
             );
 
             row.addComponents(
-                new ButtonBuilder().setCustomId(`vote_${state.game}_lol`).setLabel('LoL').setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId(`vote_${state.game}_valorant`).setLabel('Valorant').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`vote_${state.game}_cs2`).setLabel('CS2').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId(`vote_${state.game}_r6s`).setLabel('R6S').setStyle(ButtonStyle.Success)
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_lol`).setLabel('LoL').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_valorant`).setLabel('Valorant').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_cs2`).setLabel('CS2').setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_r6s`).setLabel('R6S').setStyle(ButtonStyle.Success)
             );
         } else {
-            embed.setTitle(`🗳️ Vote for Team Formation - ${config.name}`);
+            embed.setTitle(`🗳️ Vote for Team Formation - ${queueName}`);
 
-            // Count mode votes
+            // Count formation votes
             let balanced = 0, captain = 0, random = 0;
             state.votes.forEach(v => {
                 if (v === 'balanced') balanced++;
@@ -119,9 +115,9 @@ export class VoteManager {
             );
 
             row.addComponents(
-                new ButtonBuilder().setCustomId(`vote_${state.game}_balanced`).setLabel('Balanced').setStyle(ButtonStyle.Primary).setEmoji('⚖️'),
-                new ButtonBuilder().setCustomId(`vote_${state.game}_captain`).setLabel('Captains').setStyle(ButtonStyle.Secondary).setEmoji('👑'),
-                new ButtonBuilder().setCustomId(`vote_${state.game}_random`).setLabel('Random').setStyle(ButtonStyle.Success).setEmoji('🎲')
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_balanced`).setLabel('Balanced').setStyle(ButtonStyle.Primary).setEmoji('⚖️'),
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_captain`).setLabel('Captains').setStyle(ButtonStyle.Secondary).setEmoji('👑'),
+                new ButtonBuilder().setCustomId(`vote_${state.sessionId}_random`).setLabel('Random').setStyle(ButtonStyle.Success).setEmoji('🎲')
             );
         }
 
@@ -139,18 +135,18 @@ export class VoteManager {
         if (!interaction.customId.startsWith('vote_')) return;
 
         const parts = interaction.customId.split('_');
-        const game = parts[1];
+        const sessionId = parts[1];
         const voteType = parts[2];
 
-        const state = this.votes.get(game);
+        const state = this.votes.get(sessionId);
         if (!state) {
-            await interaction.reply({ content: '❌ No active vote for this game.', ephemeral: true });
+            await interaction.reply({ content: '❌ This vote is no longer active.', ephemeral: true });
             return;
         }
 
-        // Check if user is in the queue
+        // Check if user is in the match
         if (!state.players.some(p => p.user.id === interaction.user.id)) {
-            await interaction.reply({ content: '❌ You are not in the queue.', ephemeral: true });
+            await interaction.reply({ content: '❌ You are not in this match.', ephemeral: true });
             return;
         }
 
@@ -162,12 +158,12 @@ export class VoteManager {
         await this.sendVoteEmbed(state, channel);
     }
 
-    async endVote(game: string) {
-        const state = this.votes.get(game);
+    async endVote(sessionId: string) {
+        const state = this.votes.get(sessionId);
         if (!state) return;
 
         if (state.timer) clearTimeout(state.timer);
-        this.votes.delete(game);
+        this.votes.delete(sessionId);
 
         // Count votes
         let balanced = 0, captain = 0, random = 0;
@@ -203,7 +199,7 @@ export class VoteManager {
 
         // Trigger Match Logic
         if (this.matchmaker) {
-            if (game === 'multigaming') {
+            if (state.game === 'multigaming') {
                 // Determine winning game
                 const counts: Record<string, number> = { lol: 0, valorant: 0, cs2: 0, r6s: 0 };
                 state.votes.forEach(v => { if (counts[v] !== undefined) counts[v]++; });
@@ -219,13 +215,13 @@ export class VoteManager {
                 });
 
                 await channel.send({ content: `🗳️ **Vote Finished!** Winning Game: **${winningGame.toUpperCase()}**` });
-                await this.matchmaker.createMatch(winningGame, state.players, 'Ranked');
+                await this.matchmaker.createMatch(winningGame, 'soloq', state.players, 'Ranked');
             } else {
                 if (winner === 'captain') {
-                    await this.matchmaker.createMatch(game, state.players, 'Captain');
+                    await this.matchmaker.createMatch(state.game, state.mode, state.players, 'Captain');
                 } else {
-                    const mode = winner === 'balanced' ? 'Ranked' : 'Casual';
-                    await this.matchmaker.createMatch(game, state.players, mode);
+                    const formation = winner === 'balanced' ? 'Ranked' : 'Casual';
+                    await this.matchmaker.createMatch(state.game, state.mode, state.players, formation);
                 }
             }
         }

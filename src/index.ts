@@ -91,9 +91,9 @@ client.once('ready', async () => {
         const gameConfigs = await prisma.gameConfig.findMany();
         for (const cfg of gameConfigs) {
             if (cfg.queueChannelId) {
-                queueManager.setChannel(cfg.game, cfg.queueChannelId, cfg.guildId, cfg.queueMessageId ?? undefined);
+                queueManager.setChannel(cfg.game, cfg.mode, cfg.queueChannelId, cfg.guildId, cfg.queueMessageId ?? undefined);
             } else {
-                logger.warn(`[startup] Game "${cfg.game}" configured without a queue channel.`);
+                logger.warn(`[startup] Queue "${cfg.game} ${cfg.mode}" configured without a queue channel.`);
             }
         }
     } catch (err) {
@@ -108,16 +108,23 @@ client.once('ready', async () => {
         logger.error('[startup] Recovery failed:', err);
     }
 
-    queueManager.on('queueFull', async (game, players) => {
-        const config = queueManager.getConfig(game);
+    // Refresh every permanent queue message (queues are empty after a restart)
+    const { prisma: db } = await import('./utils/db');
+    const boundConfigs = await db.gameConfig.findMany({ where: { queueMessageId: { not: null } } });
+    for (const cfg of boundConfigs) {
+        queueManager.emit('queueUpdate', cfg.game, cfg.mode);
+    }
+
+    queueManager.on('queueFull', async (game, mode, players) => {
+        const config = queueManager.getConfig(game, mode);
         if (!config || !config.channelId) {
-            logger.error(`[queueFull] No channel bound for game "${game}".`);
+            logger.error(`[queueFull] No channel bound for queue "${game} ${mode}".`);
             return;
         }
 
         const channel = await client.channels.fetch(config.channelId).catch(() => null) as any;
         if (channel) {
-            await readyCheckManager.startReadyCheck(game, players, channel);
+            await readyCheckManager.startReadyCheck(game, mode, players, channel);
         }
     });
 });
@@ -172,10 +179,16 @@ client.on('interactionCreate', async (interaction) => {
             } else if (interaction.customId.startsWith('afk_')) {
                 await afkManager.handleInteraction(interaction);
             } else if (interaction.customId.startsWith('refresh_leaderboard_')) {
-                const game = interaction.customId.replace('refresh_leaderboard_', '');
+                // refresh_leaderboard_<game>[_<mode>] (legacy buttons have no mode)
+                const rest = interaction.customId.replace('refresh_leaderboard_', '');
+                const [game, mode] = rest.split('_');
                 await interaction.deferReply({ ephemeral: true });
                 const { getManagers } = await import('./managers/registry');
-                await getManagers().leaderboard.updateLeaderboard(game);
+                if (mode) {
+                    await getManagers().leaderboard.updateLeaderboard(game, mode);
+                } else {
+                    await getManagers().leaderboard.updateGameLeaderboards(game);
+                }
                 await interaction.editReply({ content: '🔄 Leaderboard refreshed.' });
             } else if (interaction.customId === 'rl_checkin') {
                 await interaction.reply({ content: `✅ **${interaction.user.username}** is checked in.`, ephemeral: false });

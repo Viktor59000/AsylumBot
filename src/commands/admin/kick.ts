@@ -24,7 +24,13 @@ export const command = {
         const game = interaction.options.getString('game', true);
         const reason = interaction.options.getString('reason') || 'No reason provided';
 
-        const success = await queueManager.removePlayer(game, targetUser.id);
+        // Kick from every mode queue of this game
+        let success = false;
+        for (const config of queueManager.getGameConfigs(game)) {
+            if (await queueManager.removePlayer(game, config.mode, targetUser.id)) {
+                success = true;
+            }
+        }
 
         if (success) {
             await interaction.reply({ content: `👢 **${targetUser.username}** was kicked from the **${game.toUpperCase()}** queue.\nReason: ${reason}` });

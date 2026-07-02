@@ -1,6 +1,6 @@
 import { Collection, User } from 'discord.js';
 import { EventEmitter } from 'events';
-import { GAME_CONFIGS } from '../utils/constants';
+import { GAME_CONFIGS, GAME_MODES, getModeConfig, queueKey, parseQueueKey } from '../utils/constants';
 import { t, Language } from '../utils/i18n';
 import { UserManager } from './UserManager';
 
@@ -10,49 +10,69 @@ export interface QueuePlayer {
     groupId?: string;
 }
 
-export type PlayerState = 'IDLE' | 'IN_QUEUE' | 'READY_CHECK' | 'IN_GAME';
+export type PlayerState = 'IDLE' | 'QUEUED' | 'READY_CHECK' | 'IN_GAME';
 
-export interface GameConfig {
-    name: string;
+export interface QueueConfig {
+    game: string;
+    mode: string;
+    name: string;      // Display name, e.g. "Rocket League 1v1"
     teamSize: number;
     channelId: string;
     guildId?: string;
     queueMessageId?: string;
 }
 
+/**
+ * Queues are indexed by (game, mode) — one queue channel per mode (Lot 1).
+ * Events: `queueUpdate(game, mode)` and `queueFull(game, mode, players)`.
+ */
 export class QueueManager extends EventEmitter {
-    private queues: Collection<string, QueuePlayer[]>;
-    private configs: Collection<string, GameConfig>;
+    private queues: Collection<string, QueuePlayer[]>; // Key: queueKey(game, mode)
+    private configs: Collection<string, QueueConfig>;  // Key: queueKey(game, mode)
 
     constructor() {
         super();
         this.queues = new Collection();
         this.configs = new Collection();
 
-        // Initialize default configs from constants
-        Object.entries(GAME_CONFIGS).forEach(([key, value]) => {
-            this.configs.set(key, { ...value, channelId: '' });
-        });
-    }
-
-    getQueue(game: string): QueuePlayer[] {
-        if (!this.queues.has(game)) {
-            this.queues.set(game, []);
+        // Initialize default configs from constants (channelId bound at ready / /setup)
+        for (const [game, modes] of Object.entries(GAME_MODES)) {
+            const gameName = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS]?.name ?? game;
+            for (const [mode, modeCfg] of Object.entries(modes)) {
+                this.configs.set(queueKey(game, mode), {
+                    game,
+                    mode,
+                    name: `${gameName} ${modeCfg.name}`,
+                    teamSize: modeCfg.teamSize,
+                    channelId: '',
+                });
+            }
         }
-        return this.queues.get(game)!;
     }
 
-    setChannel(game: string, channelId: string, guildId?: string, queueMessageId?: string) {
-        const existing = this.configs.get(game);
+    getQueue(game: string, mode: string): QueuePlayer[] {
+        const key = queueKey(game, mode);
+        if (!this.queues.has(key)) {
+            this.queues.set(key, []);
+        }
+        return this.queues.get(key)!;
+    }
+
+    setChannel(game: string, mode: string, channelId: string, guildId?: string, queueMessageId?: string) {
+        const key = queueKey(game, mode);
+        const existing = this.configs.get(key);
         if (existing) {
             existing.channelId = channelId;
             if (guildId) existing.guildId = guildId;
             if (queueMessageId) existing.queueMessageId = queueMessageId;
         } else {
-            const base = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS];
-            this.configs.set(game, {
-                name: base?.name ?? game,
-                teamSize: base?.teamSize ?? 5,
+            const gameName = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS]?.name ?? game;
+            const modeCfg = getModeConfig(game, mode);
+            this.configs.set(key, {
+                game,
+                mode,
+                name: `${gameName} ${modeCfg?.name ?? mode}`,
+                teamSize: modeCfg?.teamSize ?? 5,
                 channelId,
                 guildId,
                 queueMessageId,
@@ -60,12 +80,18 @@ export class QueueManager extends EventEmitter {
         }
     }
 
+    /** All queues, keyed by queueKey(game, mode) — use parseQueueKey on the key. */
     getAllQueues(): Collection<string, QueuePlayer[]> {
         return this.queues;
     }
 
-    async addPlayer(game: string, user: User, groupId?: string, lang: Language = 'en'): Promise<{ success: boolean; reason?: string }> {
-        // Check IGN exists
+    async addPlayer(game: string, mode: string, user: User, groupId?: string, lang: Language = 'en'): Promise<{ success: boolean; reason?: string }> {
+        const config = this.configs.get(queueKey(game, mode));
+        if (!config) {
+            return { success: false, reason: `❌ Unknown queue: ${game} ${mode}.` };
+        }
+
+        // Check IGN exists (per game — shared across the game's modes)
         const { prisma } = await import('../utils/db');
 
         const userIgn = await prisma.userIgn.findUnique({
@@ -82,7 +108,6 @@ export class QueueManager extends EventEmitter {
         }
 
         // Check Suspension
-
         const activePenalty = await prisma.penalty.findFirst({
             where: {
                 userId: user.id,
@@ -95,9 +120,7 @@ export class QueueManager extends EventEmitter {
             return { success: false, reason: `Suspended until ${activePenalty.expiresAt.toLocaleTimeString()} (${activePenalty.reason})` };
         }
 
-        // Atomic Status Check & Lock
-        // We attempt to update the user status to 'QUEUED' ONLY IF it is currently 'IDLE'.
-        // This prevents race conditions where two requests check isIdle() == true simultaneously.
+        // Atomic Status Check & Lock: QUEUED only if currently IDLE (prevents double-queue races)
         const updateResult = await prisma.user.updateMany({
             where: {
                 id: user.id,
@@ -109,15 +132,7 @@ export class QueueManager extends EventEmitter {
         });
 
         if (updateResult.count === 0) {
-            // If count is 0, user was not IDLE (or doesn't exist).
-            // We check if they exist first, or we assume they do because of interaction context.
-            // But if they are new, they might not have a DB entry yet.
-            // If they are new, their status is technically IDLE but DB row missing.
-
-            // To be safe for new users: Upsert loosely first? 
-            // Better: Check if user exists. If not, create as QUEUED.
-            // If exists, use atomic lock.
-
+            // Not IDLE — or new user with no DB row yet
             const existing = await prisma.user.findUnique({ where: { id: user.id } });
             if (!existing) {
                 await prisma.user.create({
@@ -129,21 +144,20 @@ export class QueueManager extends EventEmitter {
             }
         }
 
-        // If we reached here, we successfully locked the user status to QUEUED in DB.
+        // Status locked to QUEUED in DB from here on.
 
-        const queue = this.getQueue(game);
-        // Secondary Safety: Check in-memory queue strictly to avoid duplicates if DB state desyncs manually
+        const queue = this.getQueue(game, mode);
+        // Secondary safety: strict in-memory duplicate check
         if (queue.some((p) => p.user.id === user.id)) {
-            // Inconsistency detected. Revert DB status.
             await UserManager.resetStatus(user.id);
             return { success: false, reason: t('queue_already_in', lang) };
         }
 
         queue.push({ user, joinedAt: new Date(), groupId });
-        this.emit('queueUpdate', game, queue); // Emit event for UI updates
+        this.emit('queueUpdate', game, mode);
 
-        if (this.isQueueFull(game)) {
-            this.emit('queueFull', game, [...queue]);
+        if (this.isQueueFull(game, mode)) {
+            this.emit('queueFull', game, mode, [...queue]);
         }
 
         return { success: true };
@@ -160,11 +174,12 @@ export class QueueManager extends EventEmitter {
 
     async removePlayerFromAllQueues(userId: string) {
         let removed = false;
-        this.queues.forEach((queue, game) => {
+        this.queues.forEach((queue, key) => {
             const index = queue.findIndex(p => p.user.id === userId);
             if (index !== -1) {
                 queue.splice(index, 1);
-                this.emit('queueUpdate', game);
+                const { game, mode } = parseQueueKey(key);
+                this.emit('queueUpdate', game, mode);
                 removed = true;
             }
         });
@@ -174,50 +189,54 @@ export class QueueManager extends EventEmitter {
         }
     }
 
-    async removePlayer(game: string, userId: string): Promise<boolean> {
-        const queue = this.getQueue(game);
+    async removePlayer(game: string, mode: string, userId: string): Promise<boolean> {
+        const queue = this.getQueue(game, mode);
         const index = queue.findIndex((p) => p.user.id === userId);
         if (index !== -1) {
             queue.splice(index, 1);
-            this.emit('queueUpdate', game, queue);
+            this.emit('queueUpdate', game, mode);
 
-            // Since we enforce single queue, if they are removed, they are idle.
-            // Unless they were in multiple queues which is now impossible.
+            // Single-queue lock: removed from their only queue → back to IDLE
             await UserManager.resetStatus(userId);
             return true;
         }
         return false;
     }
 
-    isQueueFull(game: string): boolean {
-        const queue = this.getQueue(game);
-        const config = this.configs.get(game);
+    isQueueFull(game: string, mode: string): boolean {
+        const queue = this.getQueue(game, mode);
+        const config = this.configs.get(queueKey(game, mode));
         if (!config) return false;
         return queue.length >= config.teamSize * 2;
     }
 
-    getRequiredPlayers(game: string): number {
-        const config = this.configs.get(game);
+    getRequiredPlayers(game: string, mode: string): number {
+        const config = this.configs.get(queueKey(game, mode));
         return config ? config.teamSize * 2 : 0;
     }
 
-    clearQueue(game: string) {
-        this.queues.set(game, []);
-        this.emit('queueUpdate', game);
+    clearQueue(game: string, mode: string) {
+        this.queues.set(queueKey(game, mode), []);
+        this.emit('queueUpdate', game, mode);
     }
 
-    getConfig(game: string): GameConfig | undefined {
-        return this.configs.get(game);
+    getConfig(game: string, mode: string): QueueConfig | undefined {
+        return this.configs.get(queueKey(game, mode));
     }
 
-    forceStart(game: string): { success: boolean; reason?: string } {
-        const queue = this.getQueue(game);
+    /** All configured modes of a game. */
+    getGameConfigs(game: string): QueueConfig[] {
+        return Array.from(this.configs.values()).filter(c => c.game === game);
+    }
+
+    forceStart(game: string, mode: string): { success: boolean; reason?: string } {
+        const queue = this.getQueue(game, mode);
         if (queue.length < 2) {
             return { success: false, reason: 'Need at least 2 players to force start.' };
         }
 
         // Emit queueFull with current players
-        this.emit('queueFull', game, [...queue]);
+        this.emit('queueFull', game, mode, [...queue]);
         return { success: true };
     }
 }

@@ -3,11 +3,14 @@ import { prisma } from '../utils/db';
 
 export class EloManager {
 
-    static async getElo(userId: string, game: string): Promise<number> {
+    // Elo is keyed by (userId, game, mode, season): each queue mode has its own ladder.
+
+    static async getElo(userId: string, game: string, mode: string): Promise<number> {
         const userElo = await prisma.elo.findFirst({
             where: {
                 userId,
                 game,
+                mode,
                 seasonId: null // Assuming current season is null (active) or handled elsewhere
             },
         });
@@ -15,7 +18,7 @@ export class EloManager {
         return userElo ? userElo.rating : 1000; // Default Elo 1000
     }
 
-    static async updateElo(userId: string, game: string, newRating: number, win: boolean) {
+    static async updateElo(userId: string, game: string, mode: string, newRating: number, win: boolean) {
         // Ensure user exists
         await prisma.user.upsert({
             where: { id: userId },
@@ -24,7 +27,7 @@ export class EloManager {
         });
 
         const existingElo = await prisma.elo.findFirst({
-            where: { userId, game, seasonId: null }
+            where: { userId, game, mode, seasonId: null }
         });
 
         if (existingElo) {
@@ -41,6 +44,7 @@ export class EloManager {
                 data: {
                     userId,
                     game,
+                    mode,
                     rating: newRating,
                     wins: win ? 1 : 0,
                     losses: win ? 0 : 1,

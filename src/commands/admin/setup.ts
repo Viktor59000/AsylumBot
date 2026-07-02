@@ -12,8 +12,9 @@ import {
     CategoryChannel,
     TextChannel
 } from 'discord.js';
-import { GAME_CONFIGS, COLORS, BOT_ICON } from '../../utils/constants';
+import { GAME_CONFIGS, GAME_MODES, COLORS, BOT_ICON } from '../../utils/constants';
 import { createQueueEmbed } from '../../utils/embeds';
+import { buildQueueButtons } from '../queue/queue';
 import { queueManager } from '../../managers/QueueManager';
 
 // Constants for selections
@@ -23,13 +24,6 @@ const REGIONS = [
     { label: 'Korea (KR)', value: 'KR', emoji: '🇰🇷' },
     { label: 'Europe Nordic & East (EUNE)', value: 'EUNE', emoji: '🇪🇺' },
     { label: 'China (CN)', value: 'CN', emoji: '🇨🇳' },
-];
-
-const MODES = [
-    { label: 'Ranked (MMR Active)', value: 'Ranked', description: 'Strict matchmaking with Elo system', emoji: '🏆' },
-    { label: 'Rosters (Teams)', value: 'Rosters', description: 'Pre-made teams competition', emoji: '🤝' },
-    { label: 'Casual (No MMR)', value: 'Casual', description: 'Random teams, just for fun', emoji: '🎲' },
-    { label: 'Captain (Draft)', value: 'Captain', description: 'Captains pick players', emoji: '👑' },
 ];
 
 export const command = {
@@ -111,19 +105,50 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
         await interaction.update({ embeds: [embed], components: [row] });
     }
 
-    // Step 3: Region Selection
+    // Step 3: Mode Selection (multi-select — one queue channel per enabled mode)
     if (action === 'game') {
         if (!interaction.isStringSelectMenu()) return;
         const selectedGame = interaction.values[0];
+        const modes = GAME_MODES[selectedGame] ?? {};
+
+        const embed = new EmbedBuilder()
+            .setTitle('🎛️ Select Queue Modes')
+            .setDescription(`Configuring for **${GAME_CONFIGS[selectedGame as keyof typeof GAME_CONFIGS].name}**.\nPick the queue modes to enable — **each mode gets its own queue channel and its own Elo ladder**.`)
+            .setColor(COLORS.ASYLUM_GOLD as any)
+            .setFooter({ text: 'Step 3/5: Mode Selection' });
+
+        const options = Object.entries(modes).map(([key, cfg]) => ({
+            label: cfg.name,
+            value: key,
+            description: `Teams of ${cfg.teamSize} (${cfg.teamSize * 2} players per match)`,
+        }));
+
+        const select = new StringSelectMenuBuilder()
+            .setCustomId(`setup_modes_${selectedGame}`)
+            .setPlaceholder('Select one or more modes...')
+            .setMinValues(1)
+            .setMaxValues(options.length)
+            .addOptions(options);
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
+        await interaction.update({ embeds: [embed], components: [row] });
+    }
+
+    // Step 4: Region Selection
+    if (action === 'modes') {
+        if (!interaction.isStringSelectMenu()) return;
+        const selectedGame = parts[2];
+        const modesCsv = interaction.values.join('-'); // mode keys never contain '-' or '_'
 
         const embed = new EmbedBuilder()
             .setTitle('🌍 Select a Region')
-            .setDescription(`Configuring for **${GAME_CONFIGS[selectedGame as keyof typeof GAME_CONFIGS].name}**.\nSelect the region for matchmaking and API data (OP.GG, etc.).`)
+            .setDescription(`Modes: **${interaction.values.join(', ')}**\nSelect the region for matchmaking and API data (OP.GG, etc.).`)
             .setColor(COLORS.ASYLUM_GOLD as any)
-            .setFooter({ text: 'Step 3/5: Region Selection' });
+            .setFooter({ text: 'Step 4/5: Region Selection' });
 
         const select = new StringSelectMenuBuilder()
-            .setCustomId(`setup_region_${selectedGame}`)
+            .setCustomId(`setup_region_${selectedGame}_${modesCsv}`)
             .setPlaceholder('Select a region...')
             .addOptions(REGIONS);
 
@@ -132,34 +157,12 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
         await interaction.update({ embeds: [embed], components: [row] });
     }
 
-    // Step 4: Mode Selection
+    // Step 5: Confirmation
     if (action === 'region') {
         if (!interaction.isStringSelectMenu()) return;
         const selectedGame = parts[2];
+        const modesCsv = parts[3];
         const selectedRegion = interaction.values[0];
-
-        const embed = new EmbedBuilder()
-            .setTitle('⚙️ Select Game Mode')
-            .setDescription(`Region: **${selectedRegion}**\nChoose the matchmaking mode for this queue.`)
-            .setColor(COLORS.ASYLUM_GOLD as any)
-            .setFooter({ text: 'Step 4/5: Mode Selection' });
-
-        const select = new StringSelectMenuBuilder()
-            .setCustomId(`setup_mode_${selectedGame}_${selectedRegion}`)
-            .setPlaceholder('Select a mode...')
-            .addOptions(MODES);
-
-        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
-
-        await interaction.update({ embeds: [embed], components: [row] });
-    }
-
-    // Step 5: Confirmation
-    if (action === 'mode') {
-        if (!interaction.isStringSelectMenu()) return;
-        const selectedGame = parts[2];
-        const selectedRegion = parts[3];
-        const selectedMode = interaction.values[0];
 
         const gameName = GAME_CONFIGS[selectedGame as keyof typeof GAME_CONFIGS].name;
 
@@ -170,14 +173,14 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
             .addFields(
                 { name: 'Game', value: gameName, inline: true },
                 { name: 'Region', value: selectedRegion, inline: true },
-                { name: 'Mode', value: selectedMode, inline: true }
+                { name: 'Modes', value: modesCsv.split('-').join(', '), inline: true }
             )
             .setFooter({ text: 'Step 5/5: Confirmation' });
 
         const row = new ActionRowBuilder<ButtonBuilder>()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`setup_confirm_${selectedGame}_${selectedRegion}_${selectedMode}`)
+                    .setCustomId(`setup_confirm_${selectedGame}_${selectedRegion}_${modesCsv}`)
                     .setLabel('Confirm & Deploy')
                     .setStyle(ButtonStyle.Success)
                     .setEmoji('🚀'),
@@ -194,8 +197,13 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
     if (action === 'confirm') {
         const selectedGame = parts[2];
         const selectedRegion = parts[3];
-        const selectedMode = parts[4];
+        const selectedModes = (parts[4] ?? '').split('-').filter(m => GAME_MODES[selectedGame]?.[m]);
         const gameConfig = GAME_CONFIGS[selectedGame as keyof typeof GAME_CONFIGS];
+
+        if (selectedModes.length === 0) {
+            await interaction.update({ content: '❌ No valid mode selected. Please restart /setup.', embeds: [], components: [] });
+            return;
+        }
 
         await interaction.update({ content: '🔄 Deploying... Please wait.', embeds: [], components: [] });
 
@@ -227,14 +235,6 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                     name: 'top-20',
                     type: ChannelType.GuildText,
                     topic: 'Leaderboard for the top 20 players.',
-                    permissions: [
-                        { id: guild.id, deny: [PermissionFlagsBits.SendMessages], allow: [PermissionFlagsBits.ViewChannel] }
-                    ]
-                },
-                {
-                    name: 'queue',
-                    type: ChannelType.GuildText,
-                    topic: 'Join the queue here!',
                     permissions: [
                         { id: guild.id, deny: [PermissionFlagsBits.SendMessages], allow: [PermissionFlagsBits.ViewChannel] }
                     ]
@@ -302,26 +302,31 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                 await historyChannel.send({ embeds: [historyEmbed] });
             }
 
-            // Leaderboard Embed
+            // Leaderboard Embeds — one permanent message per mode (edited in place afterwards)
             const leaderboardChannel = createdChannels['top-20'];
+            const leaderboardMessageIds: Record<string, string> = {};
             if (leaderboardChannel) {
-                const leaderboardEmbed = new EmbedBuilder()
-                    .setTitle('🏆 Leaderboard')
-                    .setDescription(`Top 20 players for **${gameConfig.name}** ${selectedMode}.\nUpdates automatically after every match.`)
-                    .addFields({ name: 'Current Standings', value: '*No suitable records to display yet. Be the first to win!*' })
-                    .setColor(COLORS.ASYLUM_GOLD as any)
-                    .setFooter({ text: 'Powered by ASYLUM-BOT' });
+                for (const mode of selectedModes) {
+                    const modeName = GAME_MODES[selectedGame][mode].name;
+                    const leaderboardEmbed = new EmbedBuilder()
+                        .setTitle(`🏆 Leaderboard: ${gameConfig.name} — ${modeName}`)
+                        .setDescription(`Top 20 players for **${gameConfig.name} ${modeName}**.\nUpdates automatically after every match.`)
+                        .addFields({ name: 'Current Standings', value: '*No suitable records to display yet. Be the first to win!*' })
+                        .setColor(COLORS.ASYLUM_GOLD as any)
+                        .setFooter({ text: 'Powered by ASYLUM-BOT' });
 
-                const refreshBtn = new ActionRowBuilder<ButtonBuilder>()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`refresh_leaderboard_${selectedGame}`)
-                            .setLabel('Refresh Leaderboard')
-                            .setStyle(ButtonStyle.Secondary)
-                            .setEmoji('🔄')
-                    );
+                    const refreshBtn = new ActionRowBuilder<ButtonBuilder>()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`refresh_leaderboard_${selectedGame}_${mode}`)
+                                .setLabel(`Refresh ${modeName}`)
+                                .setStyle(ButtonStyle.Secondary)
+                                .setEmoji('🔄')
+                        );
 
-                await leaderboardChannel.send({ embeds: [leaderboardEmbed], components: [refreshBtn] });
+                    const msg = await leaderboardChannel.send({ embeds: [leaderboardEmbed], components: [refreshBtn] });
+                    leaderboardMessageIds[mode] = msg.id;
+                }
             }
 
             // Admin Logs Embed
@@ -345,61 +350,73 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                 await inProgressChannel.send({ embeds: [inProgressEmbed] });
             }
 
-            // Send Queue Embed
-            const queueChannel = createdChannels['queue'];
-            if (queueChannel) {
-                const requiredPlayers = gameConfig.teamSize * 2;
-                const { embed: queueEmbed, files: queueFiles } = createQueueEmbed(selectedGame, [], requiredPlayers);
-                const queueRow = new ActionRowBuilder<ButtonBuilder>()
-                    .addComponents(
-                        new ButtonBuilder().setCustomId(`join_queue_${selectedGame}`).setLabel('Join Queue').setStyle(ButtonStyle.Success),
-                        new ButtonBuilder().setCustomId(`leave_queue_${selectedGame}`).setLabel('Leave Queue').setStyle(ButtonStyle.Danger),
-                        new ButtonBuilder().setCustomId(`invite_party_${selectedGame}`).setLabel('Party Invite').setStyle(ButtonStyle.Primary)
-                    );
+            // One queue channel + permanent queue message PER MODE
+            const { prisma } = await import('../../utils/db');
+            const { queueManager } = await import('../../managers/QueueManager');
+            const deployedChannels: string[] = [];
+
+            for (const mode of selectedModes) {
+                const modeCfg = GAME_MODES[selectedGame][mode];
+                const queueChannelName = `${selectedGame}-${mode}`; // e.g. rl-1v1, lol-soloq
+
+                let queueChannel = guild.channels.cache.find(c => c.name === queueChannelName && c.parentId === mainCategory.id) as TextChannel;
+                if (!queueChannel) {
+                    queueChannel = await guild.channels.create({
+                        name: queueChannelName,
+                        type: ChannelType.GuildText,
+                        parent: mainCategory.id,
+                        topic: `${gameConfig.name} ${modeCfg.name} — join the queue here!`,
+                        permissionOverwrites: [
+                            { id: guild.id, deny: [PermissionFlagsBits.SendMessages], allow: [PermissionFlagsBits.ViewChannel] }
+                        ],
+                    }) as TextChannel;
+                }
+
+                const requiredPlayers = modeCfg.teamSize * 2;
+                const { embed: queueEmbed, files: queueFiles } = createQueueEmbed(selectedGame, mode, [], requiredPlayers);
 
                 const queueMessage = await queueChannel.send({
-                    content: `**${gameConfig.name} ${selectedMode} Queue** (${selectedRegion})`,
+                    content: `**${gameConfig.name} ${modeCfg.name} Queue** (${selectedRegion})`,
                     embeds: [queueEmbed],
                     files: queueFiles,
-                    components: [queueRow]
+                    components: [buildQueueButtons(selectedGame, mode)]
                 });
 
-                await interaction.followUp({ content: `✅ **Setup Complete!**\nDeployed ${gameConfig.name} (${selectedRegion} - ${selectedMode}) successfully.\nCheck <#${queueChannel.id}> to start playing.`, ephemeral: true });
-
-                // Save Configuration to Database
-                const { prisma } = await import('../../utils/db');
+                // Save configuration — one GameConfig row per (guild, game, mode)
+                const configData = {
+                    region: selectedRegion,
+                    queueChannelId: queueChannel.id,
+                    historyChannelId: historyChannel?.id,
+                    leaderboardChannelId: leaderboardChannel?.id,
+                    adminLogChannelId: logsChannel?.id,
+                    queueMessageId: queueMessage.id,
+                    leaderboardMessageId: leaderboardMessageIds[mode],
+                };
                 await prisma.gameConfig.upsert({
                     where: {
-                        guildId_game: {
+                        guildId_game_mode: {
                             guildId: guild.id,
-                            game: selectedGame
+                            game: selectedGame,
+                            mode,
                         }
                     },
-                    update: {
-                        region: selectedRegion,
-                        mode: selectedMode,
-                        queueChannelId: queueChannel.id,
-                        historyChannelId: historyChannel?.id,
-                        leaderboardChannelId: leaderboardChannel?.id,
-                        adminLogChannelId: logsChannel?.id,
-                        queueMessageId: queueMessage.id, // Store message ID for updates
-                    },
+                    update: configData,
                     create: {
                         guildId: guild.id,
                         game: selectedGame,
-                        region: selectedRegion,
-                        mode: selectedMode,
-                        queueChannelId: queueChannel.id,
-                        historyChannelId: historyChannel?.id,
-                        leaderboardChannelId: leaderboardChannel?.id,
-                        adminLogChannelId: logsChannel?.id,
-                        queueMessageId: queueMessage.id, // Store message ID for updates
+                        mode,
+                        ...configData,
                     }
                 });
 
-                const { queueManager } = await import('../../managers/QueueManager');
-                queueManager.setChannel(selectedGame, queueChannel.id, guild.id, queueMessage.id);
+                queueManager.setChannel(selectedGame, mode, queueChannel.id, guild.id, queueMessage.id);
+                deployedChannels.push(`<#${queueChannel.id}>`);
             }
+
+            await interaction.followUp({
+                content: `✅ **Setup Complete!**\nDeployed **${gameConfig.name}** (${selectedRegion}) with mode(s): **${selectedModes.join(', ')}**.\nQueues: ${deployedChannels.join(' • ')}`,
+                ephemeral: true
+            });
 
         } catch (error) {
             console.error(error);

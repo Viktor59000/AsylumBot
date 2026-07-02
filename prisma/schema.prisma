@@ -52,6 +52,7 @@ model Elo {
   id            Int      @id @default(autoincrement())
   userId        String
   game          String   // 'rl', 'cs2', 'r6s', 'lol', 'valorant'
+  mode          String   @default("soloq") // queue mode: 'soloq', '1v1', '2v2', '3v3', ...
   rating        Int      @default(1000)
   wins          Int      @default(0)
   losses        Int      @default(0)
@@ -59,16 +60,17 @@ model Elo {
   highestRating Int      @default(1000)
   lastMatchDate DateTime @default(now())
   seasonId      Int?
-  
+
   user          User     @relation(fields: [userId], references: [id])
   season        Season?  @relation(fields: [seasonId], references: [id])
 
-  @@unique([userId, game, seasonId], name: "userId_game_seasonId")
+  @@unique([userId, game, mode, seasonId], name: "userId_game_mode_seasonId")
 }
 
 model Match {
   id        Int      @id @default(autoincrement())
   game      String
+  mode      String   @default("soloq") // queue mode this match was played in
   guildId   String?
   createdAt DateTime @default(now())
   winner    String?  // 'team1' or 'team2'
@@ -141,8 +143,8 @@ model GameConfig {
   guildId   String
   game      String   // 'rl', 'lol', etc.
   region    String   // 'EUW', 'NA'
-  mode      String   // 'Ranked', 'Casual', 'Captain'
-  
+  mode      String   // queue mode: 'soloq', '1v1', '2v2', '3v3', ...
+
   // Channel IDs
   queueChannelId        String?
   historyChannelId      String?
@@ -150,8 +152,9 @@ model GameConfig {
   adminLogChannelId     String?
   webhookUrl            String?
   queueMessageId        String? // ID of the permanent queue message for auto-updates
-  
-  @@unique([guildId, game])
+  leaderboardMessageId  String? // ID of the permanent leaderboard message (edited in place)
+
+  @@unique([guildId, game, mode], name: "guildId_game_mode")
 }
 
 model ShopItem {

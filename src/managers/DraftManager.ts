@@ -55,6 +55,20 @@ export class DraftManager {
         this.sessions.set(lobby.textChannelId, session);
 
         const channel = await this.getChannel(lobby.textChannelId);
+
+        // Nothing to draft (e.g. 1v1: both players are captains) → finalize immediately
+        if (pool.length === 0) {
+            this.sessions.delete(lobby.textChannelId);
+            if (channel) {
+                await this.updateDraftEmbed(session, channel, true);
+                await channel.send({ content: '✅ **Teams are set!** (no players to draft)' });
+            }
+            if (this.matchmaker) {
+                await this.matchmaker.finalizeMatch(lobby);
+            }
+            return;
+        }
+
         if (channel) {
             await this.updateDraftEmbed(session, channel);
             await channel.send({ content: `👑 **Draft Started!**\n🔵 Captain 1: <@${captain1.user.id}>\n🔴 Captain 2: <@${captain2.user.id}>\n\nSelect a player from the menu below.` });

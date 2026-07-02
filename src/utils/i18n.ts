@@ -23,6 +23,19 @@ const translations = {
         queue_full: '🔔 **Queue Full!**',
         queue_match_found: '✅ **Match Found!** You have been removed from all other queues.',
 
+        // Party
+        party_no_1v1: '❌ Parties are not available in 1v1 queues.',
+        party_not_for_you: '❌ This invite is not for you.',
+        party_inviter_gone: '❌ The inviter is no longer in the queue.',
+        party_joined: '✅ {user} joined {inviter}\'s party!',
+        party_declined: '❌ Invite declined.',
+        party_must_be_in_queue: '❌ You must be in the queue to invite others.',
+        party_select_player: 'Select a player to invite to your party:',
+        party_invited: '{target}, you have been invited to join {inviter}\'s party for **{game}**!',
+        party_no_self: '❌ You cannot invite yourself.',
+        party_no_bots: '❌ You cannot invite bots.',
+        party_full: '❌ This party is full ({max} players max for this mode).',
+
         // General
         error_generic: '❌ An error occurred.',
         error_no_permission: '❌ You do not have permission to use this command.',
@@ -46,6 +59,19 @@ const translations = {
         queue_already_in: '❌ Vous êtes déjà dans la file.',
         queue_full: '🔔 **File Pleine !**',
         queue_match_found: '✅ **Match Trouvé !** Vous avez été retiré des autres files.',
+
+        // Party
+        party_no_1v1: '❌ Les groupes ne sont pas disponibles en file 1v1.',
+        party_not_for_you: '❌ Cette invitation ne vous est pas destinée.',
+        party_inviter_gone: '❌ L\'invitant n\'est plus dans la file.',
+        party_joined: '✅ {user} a rejoint le groupe de {inviter} !',
+        party_declined: '❌ Invitation refusée.',
+        party_must_be_in_queue: '❌ Vous devez être dans la file pour inviter quelqu\'un.',
+        party_select_player: 'Sélectionnez un joueur à inviter dans votre groupe :',
+        party_invited: '{target}, vous êtes invité à rejoindre le groupe de {inviter} pour **{game}** !',
+        party_no_self: '❌ Vous ne pouvez pas vous inviter vous-même.',
+        party_no_bots: '❌ Vous ne pouvez pas inviter de bots.',
+        party_full: '❌ Ce groupe est complet ({max} joueurs max pour ce mode).',
 
         // General
         error_generic: '❌ Une erreur est survenue.',

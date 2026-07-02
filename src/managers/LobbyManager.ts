@@ -20,6 +20,7 @@ import { GameStrategy } from '../strategies/GameStrategy';
 export interface LobbyState {
     matchId: number;
     game: string;
+    queueMode: string; // queue mode: 'soloq', '1v1', '2v2', '3v3', ...
     guildId: string;
     textChannelId: string;
     voiceChannelId1: string;
@@ -28,7 +29,7 @@ export interface LobbyState {
     players: QueuePlayer[];
     team1: User[];
     team2: User[];
-    mode: 'Ranked' | 'Captain' | 'Casual';
+    mode: 'Ranked' | 'Captain' | 'Casual'; // team formation
 }
 
 export class LobbyManager {
@@ -50,6 +51,7 @@ export class LobbyManager {
         guild: Guild,
         matchId: number,
         game: string,
+        queueMode: string,
         players: QueuePlayer[],
         mode: 'Ranked' | 'Captain' | 'Casual'
     ): Promise<LobbyState | null> {
@@ -87,9 +89,12 @@ export class LobbyManager {
         let teamCount = 2;
         if (isArena) teamCount = 8;
 
+        const { queueManager } = await import('./QueueManager');
+        const teamSize = queueManager.getConfig(game, queueMode)?.teamSize ?? 5;
+
         for (let i = 1; i <= teamCount; i++) {
             const channelName = isArena ? `Match #${matchId} - Team ${i}` : (i === 1 ? `Match #${matchId} - Blue` : `Match #${matchId} - Red`);
-            const limit = isArena ? 2 : 5;
+            const limit = isArena ? 2 : teamSize;
 
             const channel = await guild.channels.create({
                 name: channelName,
@@ -111,6 +116,7 @@ export class LobbyManager {
         const state: LobbyState = {
             matchId,
             game,
+            queueMode,
             guildId: guild.id,
             textChannelId: textChannel.id,
             voiceChannelId1: voiceChannels[0],

@@ -55,7 +55,8 @@ Trois documents font foi :
 - `/setup` : sélection multi-mode → crée un salon de file par mode activé.
 - Elo clé **(userId, game, mode, saison)**.
 - Ré-indexer ready-check/vote/draft/veto par session (cf. §2).
-- **DoD** : deux modes du même jeu tournent en parallèle sans collision.
+- **Réparer & finaliser le Party/Duo invite** (actuellement cassé) : bouton → sélection du joueur → accept → le groupe est **gardé ensemble** par le matchmaking (base du mode DuoQ). Diagnostiquer le flux `invite_party_` / `select_party_member_` / `accept_invite_` dans `queue.ts` + routage `index.ts`.
+- **DoD** : deux modes du même jeu tournent en parallèle sans collision ; un duo invité se retrouve dans la même équipe.
 
 ### Lot 2 — Roster de jeux complet (DESIGN §1 + §1bis)
 - Rocket League : modes **1v1 / 2v2 / 3v3** (salons + Elo séparés).

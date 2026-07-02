@@ -56,7 +56,7 @@ export const command = {
         const getTeamAvg = async (players: typeof team1Players) => {
             let total = 0;
             for (const p of players) {
-                total += await EloManager.getElo(p.userId, match.game);
+                total += await EloManager.getElo(p.userId, match.game, match.mode);
             }
             return players.length > 0 ? total / players.length : 1000;
         };
@@ -69,13 +69,13 @@ export const command = {
 
         for (const player of match.players) {
             const isWinner = player.team === winningTeam;
-            const currentElo = await EloManager.getElo(player.userId, match.game);
+            const currentElo = await EloManager.getElo(player.userId, match.game, match.mode);
             const opponentAvg = player.team === 'team1' ? avgElo2 : avgElo1;
 
             const newRating = EloManager.calculateNewRating(currentElo, opponentAvg, isWinner ? 1 : 0);
             const change = newRating - currentElo;
 
-            await EloManager.updateElo(player.userId, match.game, newRating, isWinner);
+            await EloManager.updateElo(player.userId, match.game, match.mode, newRating, isWinner);
 
             eloChanges.push(`${isWinner ? '✅' : '❌'} <@${player.userId}>: ${change > 0 ? '+' : ''}${change} (${newRating})`);
 
@@ -100,6 +100,6 @@ export const command = {
         // Send Webhook Data + Update Leaderboard (singletons)
         const { getManagers } = await import('../../managers/registry');
         await getManagers().webhook.sendMatchData(matchId);
-        await getManagers().leaderboard.updateLeaderboard(match.game);
+        await getManagers().leaderboard.updateLeaderboard(match.game, match.mode);
     },
 };

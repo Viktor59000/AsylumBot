@@ -32,24 +32,20 @@ export const command = {
             return;
         }
 
-        const config = await prisma.gameConfig.findUnique({
-            where: {
-                guildId_game: {
-                    guildId: interaction.guildId,
-                    game: game
-                }
-            }
+        const configs = await prisma.gameConfig.findMany({
+            where: { guildId: interaction.guildId, game }
         });
 
-        if (!config) {
+        if (configs.length === 0) {
             await interaction.editReply(`No configuration found for **${game}**. Please run \`/setup\` first.`);
             return;
         }
 
         const newUrl = url.toLowerCase() === 'none' ? null : url;
 
-        await prisma.gameConfig.update({
-            where: { id: config.id },
+        // The webhook applies to the whole game (every mode row)
+        await prisma.gameConfig.updateMany({
+            where: { guildId: interaction.guildId, game },
             data: { webhookUrl: newUrl }
         });
 

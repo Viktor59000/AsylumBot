@@ -22,16 +22,17 @@ export class Matchmaker {
         // queueFull is now handled in index.ts via ReadyCheckManager
     }
 
-    async createMatch(game: string, players: QueuePlayer[], mode: 'Ranked' | 'Casual' | 'Captain' = 'Ranked') {
-        const configGuildId = queueManager.getConfig(game)?.guildId;
+    async createMatch(game: string, mode: string, players: QueuePlayer[], formation: 'Ranked' | 'Casual' | 'Captain' = 'Ranked') {
+        const configGuildId = queueManager.getConfig(game, mode)?.guildId;
         const guild = (configGuildId && this.client.guilds.cache.get(configGuildId)) || this.client.guilds.cache.first();
         if (!guild) return;
 
         const match = await prisma.match.create({
             data: {
                 game,
+                mode,
                 guildId: guild.id,
-                isRanked: mode === 'Ranked',
+                isRanked: formation === 'Ranked',
                 status: 'pending',
                 players: {
                     create: players.map(p => ({ userId: p.user.id, team: 'pending' })),
@@ -45,7 +46,7 @@ export class Matchmaker {
             p.user.send(`✅ **Match Found!** You have been removed from all other queues.`).catch(() => { });
         }
 
-        const lobby = await lobbyManager.createLobby(guild, match.id, game, players, mode);
+        const lobby = await lobbyManager.createLobby(guild, match.id, game, mode, players, formation);
         if (!lobby) return;
 
         // Persist every match channel id right away so cleanup survives a restart (P1-2)
@@ -58,9 +59,9 @@ export class Matchmaker {
             },
         });
 
-        if (mode === 'Ranked' || mode === 'Casual') {
+        if (formation === 'Ranked' || formation === 'Casual') {
             await this.balanceTeams(lobby);
-        } else if (mode === 'Captain') {
+        } else if (formation === 'Captain') {
             await draftManager.startDraft(lobby);
         }
     }
@@ -80,20 +81,77 @@ export class Matchmaker {
             // Future: Implement role matching algorithm using these roles
         }
 
-        const shuffled = lobby.players.sort(() => 0.5 - Math.random());
-
         if (lobby.game === 'arena') {
+            const shuffled = [...lobby.players].sort(() => 0.5 - Math.random());
             lobby.team1 = shuffled.map((p: any) => p.user);
             lobby.team2 = [];
         } else {
-            const mid = Math.floor(shuffled.length / 2);
-            const team1 = shuffled.slice(0, mid).map((p: any) => p.user);
-            const team2 = shuffled.slice(mid).map((p: any) => p.user);
-            lobby.team1 = team1;
-            lobby.team2 = team2;
+            const [team1, team2] = this.splitIntoTeams(lobby.players);
+            lobby.team1 = team1.map(p => p.user);
+            lobby.team2 = team2.map(p => p.user);
         }
 
         await this.finalizeMatch(lobby);
+    }
+
+    /**
+     * Random team split that keeps duo/trio groups (groupId) in the same team.
+     * Elo-based balancing replaces the random unit order in Lot 3.
+     */
+    private splitIntoTeams(players: QueuePlayer[]): [QueuePlayer[], QueuePlayer[]] {
+        const team1Size = Math.floor(players.length / 2);
+        const team2Size = players.length - team1Size;
+
+        // Build indivisible units: one per group, one per solo
+        const byGroup = new Map<string, QueuePlayer[]>();
+        const units: QueuePlayer[][] = [];
+        for (const p of players) {
+            if (p.groupId) {
+                let group = byGroup.get(p.groupId);
+                if (!group) {
+                    group = [];
+                    byGroup.set(p.groupId, group);
+                    units.push(group);
+                }
+                group.push(p);
+            } else {
+                units.push([p]);
+            }
+        }
+
+        // Unbiased shuffle (Fisher-Yates), then biggest units first for packing
+        for (let i = units.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [units[i], units[j]] = [units[j], units[i]];
+        }
+        units.sort((a, b) => b.length - a.length);
+
+        const team1: QueuePlayer[] = [];
+        const team2: QueuePlayer[] = [];
+        for (const unit of units) {
+            const space1 = team1Size - team1.length;
+            const space2 = team2Size - team2.length;
+
+            let target: QueuePlayer[] | null = null;
+            if (unit.length <= space1 && unit.length <= space2) {
+                target = space1 === space2 ? (Math.random() < 0.5 ? team1 : team2) : (space1 > space2 ? team1 : team2);
+            } else if (unit.length <= space1) {
+                target = team1;
+            } else if (unit.length <= space2) {
+                target = team2;
+            }
+
+            if (target) {
+                target.push(...unit);
+            } else {
+                // Infeasible packing (e.g. three duos in a 3v3): split this group as last resort
+                for (const p of unit) {
+                    (team1.length < team1Size ? team1 : team2).push(p);
+                }
+            }
+        }
+
+        return [team1, team2];
     }
 
     async finalizeMatch(lobby: any) {
@@ -126,7 +184,7 @@ export class Matchmaker {
 
         const allUserIds = [...lobby.team1, ...lobby.team2].map(u => u.id);
         await prisma.elo.updateMany({
-            where: { userId: { in: allUserIds }, game: lobby.game },
+            where: { userId: { in: allUserIds }, game: lobby.game, mode: lobby.queueMode },
             data: { lastMatchDate: new Date() }
         });
 
@@ -166,8 +224,9 @@ export class Matchmaker {
         const channel = guild.channels.cache.find((c: any) => c.name === 'matches' || c.name === 'match-logs' || c.name === 'in-progress');
         if (!channel || !channel.isTextBased()) return;
 
+        const queueName = queueManager.getConfig(lobby.game, lobby.queueMode)?.name ?? lobby.game.toUpperCase();
         const embed = new EmbedBuilder()
-            .setTitle(`⚔️ ${lobby.game.toUpperCase()} Match Started!`)
+            .setTitle(`⚔️ ${queueName} Match Started!`)
             .setDescription(`**Match ID:** #${lobby.matchId}\n**Mode:** ${lobby.mode}`)
             .addFields(
                 { name: 'Team 1', value: lobby.team1.map((u: any) => u.username).join('\n') || 'TBD', inline: true },

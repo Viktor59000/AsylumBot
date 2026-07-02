@@ -1,5 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, Collection } from 'discord.js';
 import { queueManager, QueuePlayer } from './QueueManager';
+import { queueKey, parseQueueKey } from '../utils/constants';
 
 export class AFKManager {
     private checkInterval: NodeJS.Timeout | null = null;
@@ -27,7 +28,8 @@ export class AFKManager {
         const queues = queueManager.getAllQueues();
         const now = Date.now();
 
-        for (const [game, queue] of queues) {
+        for (const [key, queue] of queues) {
+            const { game, mode } = parseQueueKey(key);
             // iterate backwards to allow removal
             for (let i = queue.length - 1; i >= 0; i--) {
                 const player = queue[i];
@@ -36,13 +38,13 @@ export class AFKManager {
 
                 if (diff > this.REMOVAL_THRESHOLD_MS) {
                     // Remove
-                    await queueManager.removePlayer(game, player.user.id);
+                    await queueManager.removePlayer(game, mode, player.user.id);
                     player.user.send('❌ **Removed from queue due to inactivity.**').catch(() => { });
                     this.warnedUsers.delete(player.user.id);
                 } else if (diff > this.WARNING_THRESHOLD_MS) {
                     // Warn
                     if (!this.warnedUsers.has(player.user.id)) {
-                        await this.sendWarning(player, game);
+                        await this.sendWarning(player, game, mode);
                         this.warnedUsers.add(player.user.id);
                     }
                 }
@@ -50,21 +52,22 @@ export class AFKManager {
         }
     }
 
-    async sendWarning(player: QueuePlayer, game: string) {
+    async sendWarning(player: QueuePlayer, game: string, mode: string) {
+        const queueName = queueManager.getConfig(game, mode)?.name ?? game;
         const row = new ActionRowBuilder<ButtonBuilder>()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`afk_keep_${game}`)
+                    .setCustomId(`afk_keep_${game}_${mode}`)
                     .setLabel('Keep Queuing')
                     .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
-                    .setCustomId(`afk_leave_${game}`)
+                    .setCustomId(`afk_leave_${game}_${mode}`)
                     .setLabel('Leave Queue')
                     .setStyle(ButtonStyle.Danger)
             );
 
         await player.user.send({
-            content: `⚠️ **AFK Check:** You have been in the **${game}** queue for over 15 minutes.`,
+            content: `⚠️ **AFK Check:** You have been in the **${queueName}** queue for over 15 minutes.`,
             components: [row]
         }).catch(() => {
             // If DM fails, maybe assume AFK and remove? Or ignore.
@@ -72,17 +75,11 @@ export class AFKManager {
     }
 
     async handleInteraction(interaction: ButtonInteraction) {
-        const [action, type, game] = interaction.customId.split('_');
+        const [action, type, game, mode] = interaction.customId.split('_');
 
         if (type === 'keep') {
-            // Reset timer?
-            // We can't easily reset joinedAt in QueueManager without modifying it.
-            // But we can remove from warnedUsers so they don't get warned again immediately?
-            // Actually if we don't update joinedAt, they will hit REMOVAL_THRESHOLD_MS regardless in 5 mins.
-            // So we MUST update joinedAt.
-
-            // QueueManager allows accessing queue by ref.
-            const queue = queueManager.getAllQueues().get(game);
+            // joinedAt must be refreshed, otherwise REMOVAL_THRESHOLD_MS still fires
+            const queue = queueManager.getAllQueues().get(queueKey(game, mode));
             const player = queue?.find(p => p.user.id === interaction.user.id);
             if (player) {
                 player.joinedAt = new Date(); // Reset timer
@@ -92,7 +89,7 @@ export class AFKManager {
                 await interaction.reply({ content: 'You are no longer in that queue.', ephemeral: true });
             }
         } else if (type === 'leave') {
-            await queueManager.removePlayer(game, interaction.user.id);
+            await queueManager.removePlayer(game, mode, interaction.user.id);
             await interaction.reply({ content: '✅ Left the queue.', ephemeral: true });
         }
     }

@@ -2,14 +2,16 @@
 
 **ASYLUM-BOT** is a powerful competitive matchmaking and Elo tracking bot designed for the **ASYLUM ELO HUB**. It manages queues, tracks player statistics, handles clan systems, and automates voice channels for a seamless competitive experience.
 
-## 🎮 Supported Games
+## 🎮 Supported Games & Modes
 
-The bot currently supports Elo tracking and matchmaking for:
-*   🚀 **Rocket League**
-*   🔫 **Counter-Strike 2**
-*   🛡️ **Rainbow Six Siege**
-*   ⚔️ **League of Legends** (with DraftLoL & OP.GG Integration)
-*   🎯 **Valorant** (with Tracker.gg Integration)
+The bot supports Elo tracking and matchmaking per **(game, mode)** — each enabled mode gets its own queue channel and its own Elo ladder:
+*   🚀 **Rocket League** — `1v1`, `2v2`, `3v3` (separate Elo per mode)
+*   🔫 **Counter-Strike 2** — `soloq`
+*   🛡️ **Rainbow Six Siege** — `soloq`
+*   ⚔️ **League of Legends** — `soloq` (with OP.GG Integration)
+*   🎯 **Valorant** — `soloq`
+
+`/setup` lets you pick which modes to enable per game (multi-select). Several matches of the same game can run in parallel across modes.
 
 ---
 

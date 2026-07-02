@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
 import { prisma } from '../../utils/db';
-import { GAME_CONFIGS } from '../../utils/constants';
+import { GAME_CONFIGS, GAME_MODES, ALL_MODE_KEYS, getDefaultMode, getModeConfig } from '../../utils/constants';
 
 
 export const command = {
@@ -33,12 +33,24 @@ export const command = {
                     { name: 'Remove (Decrement)', value: 'remove' },
                 ),
         )
+        .addStringOption((option) =>
+            option
+                .setName('mode')
+                .setDescription('The queue mode (default: first mode of the game)')
+                .addChoices(...ALL_MODE_KEYS.map(m => ({ name: m, value: m }))),
+        )
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction: ChatInputCommandInteraction) {
         const targetUser = interaction.options.getUser('user', true);
         const game = interaction.options.getString('game', true);
         const amount = interaction.options.getInteger('amount', true);
         const action = interaction.options.getString('action', true);
+        const mode = interaction.options.getString('mode') ?? getDefaultMode(game);
+
+        if (!getModeConfig(game, mode)) {
+            await interaction.reply({ content: `❌ Invalid mode **${mode}** for this game. Valid modes: ${Object.keys(GAME_MODES[game] ?? {}).join(', ')}`, ephemeral: true });
+            return;
+        }
 
         // Ensure user exists
         await prisma.user.upsert({
@@ -48,7 +60,7 @@ export const command = {
         });
 
         const eloRecord = await prisma.elo.findFirst({
-            where: { userId: targetUser.id, game, seasonId: null }
+            where: { userId: targetUser.id, game, mode, seasonId: null }
         });
 
         let newRating = 1000;
@@ -74,6 +86,7 @@ export const command = {
                 data: {
                     userId: targetUser.id,
                     game,
+                    mode,
                     seasonId: null,
                     rating: newRating,
                     wins: 0,
@@ -83,11 +96,11 @@ export const command = {
         }
 
         await interaction.reply({
-            content: `✅ Updated **${game}** MMR for <@${targetUser.id}>.\nAction: ${action.toUpperCase()} ${amount}\nNew Rating: **${newRating}**`
+            content: `✅ Updated **${game} ${mode}** MMR for <@${targetUser.id}>.\nAction: ${action.toUpperCase()} ${amount}\nNew Rating: **${newRating}**`
         });
 
         // Update Leaderboard
         const { getManagers } = await import('../../managers/registry');
-        await getManagers().leaderboard.updateLeaderboard(game);
+        await getManagers().leaderboard.updateLeaderboard(game, mode);
     },
 };

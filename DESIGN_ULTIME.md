@@ -96,6 +96,28 @@ Règles clés à implémenter :
 
 ---
 
+### §3bis — Intégrations trackers & preview joueurs
+
+Objectif : à l'IGN, capturer le compte + générer les liens trackers ; au lancement d'un match, afficher une **preview** (champions mains, winrate, rôle, rang) tirée de **sources officielles**.
+
+**Règle absolue : pas de scraping op.gg / tracker.gg** (bloqué + interdit par leurs CGU, casse en permanence). On utilise des **APIs officielles** :
+
+| Jeu | Source preview (stats réelles) | Liens trackers (triviaux, sans API) |
+|-----|-------------------------------|-------------------------------------|
+| LoL | **API Riot** (rank, mastery = champions mains, match history → winrate/rôle) | op.gg / u.gg deep-link depuis l'IGN |
+| Valorant | **API Riot** (account + MMR/matchs) | tracker.gg/valorant/profile/... |
+| TFT | **API Riot** (TFT league + matchs) | tactics.tools / metatft |
+| CS2 | pas d'API Riot ; Steam/Leetify limité | leetify / csstats deep-link |
+| R6 | pas d'API officielle ; sources tierces limitées | r6.tracker.network deep-link |
+| Rocket League | **pas d'API officielle** ; tracker.gg API (clé+quota) ou ballchasing.com (replays) | rocketleague.tracker.network deep-link |
+
+Implémentation :
+- **À l'`/ign`** : valider le format (Riot ID `Name#Tag` pour Riot games), stocker l'IGN, et **afficher/enregistrer les liens trackers** générés depuis l'IGN (aucune API requise — juste de la construction d'URL). Faisable dès le Lot 4.
+- **Preview live** (mains/winrate/rôle/rang) : nouveau `TrackerManager` appelant l'**API Riot** (clé `RIOT_API_KEY` en `.env`), avec **cache** (respect des quotas) et rafraîchissement au lancement du match. Sans clé Riot → afficher seulement les liens trackers (dégradé propre).
+- **Rocket League** : preview riche non garantie (pas d'API officielle) → au minimum liens trackers + rang si tracker.gg API dispo.
+
+> ⚠️ Ce module dépend d'une **clé API Riot** (à créer par l'admin sur developer.riotgames.com). Les liens trackers, eux, ne dépendent de rien et peuvent arriver dès le Lot 4.
+
 ## 4. Matchmaking & équilibrage
 
 Remplacer le `sort(() => 0.5 - Math.random())` actuel (aléatoire pur) par un équilibrage Elo réel :

@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
 import { queueManager } from '../../managers/QueueManager';
+import { ALL_MODE_KEYS, getDefaultMode } from '../../utils/constants';
 
 export const command = {
     data: new SlashCommandBuilder()
@@ -17,16 +18,23 @@ export const command = {
                     { name: 'Rainbow Six Siege', value: 'r6s' },
                 ),
         )
+        .addStringOption((option) =>
+            option
+                .setName('mode')
+                .setDescription('The queue mode (default: first mode of the game)')
+                .addChoices(...ALL_MODE_KEYS.map(m => ({ name: m, value: m }))),
+        )
         .addIntegerOption((option) =>
             option.setName('teamsize').setDescription('Players per team').setRequired(false),
         ),
     async execute(interaction: ChatInputCommandInteraction) {
         const game = interaction.options.getString('game', true);
+        const mode = interaction.options.getString('mode') ?? getDefaultMode(game);
         const teamSize = interaction.options.getInteger('teamsize');
 
-        const config = queueManager.getConfig(game);
+        const config = queueManager.getConfig(game, mode);
         if (!config) {
-            await interaction.reply({ content: 'Invalid game.', ephemeral: true });
+            await interaction.reply({ content: 'Invalid game/mode.', ephemeral: true });
             return;
         }
 

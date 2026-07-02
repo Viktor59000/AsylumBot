@@ -12,19 +12,20 @@ const getAttachment = (game: string, assetName: string) => {
     return null;
 };
 
-export const createQueueEmbed = (game: string, queue: QueuePlayer[], required: number) => {
+export const createQueueEmbed = (game: string, mode: string, queue: QueuePlayer[], required: number) => {
     const { queueManager } = require('../managers/QueueManager');
-    const config = queueManager.getConfig(game);
+    const config = queueManager.getConfig(game, mode);
+    const gameConfig = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS];
     const isFull = queue.length >= required;
 
     const embed = new EmbedBuilder()
-        .setTitle(`${config.name}`)
+        .setTitle(`${config?.name ?? game}`)
         .setColor(isFull ? COLORS.SUCCESS as ColorResolvable : COLORS.ASYLUM_GOLD as ColorResolvable)
-        .setThumbnail(config.thumbnail)
+        .setThumbnail(gameConfig?.thumbnail ?? BOT_ICON)
         .setAuthor({ name: 'ASYLUM ELO HUB', iconURL: BOT_ICON })
         .addFields(
             { name: 'MMR', value: '**ON** 🟢', inline: true },
-            { name: 'Mode', value: '🏆 **Ranked**', inline: true },
+            { name: 'Mode', value: `🎮 **${mode}**`, inline: true },
         )
         .setFooter({ text: 'ID: Global • 🌍 Global Leaderboard' });
 
@@ -90,13 +91,14 @@ export const createMatchEmbed = (matchId: number, game: string, team1: User[], t
 
 export const createLeaderboardEmbed = (
     game: string,
+    mode: string,
     players: { user: { username: string }; rating: number; wins: number; losses: number; winStreak?: number }[],
     page: number,
     totalPages: number
 ) => {
     const config = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS];
     const embed = new EmbedBuilder()
-        .setTitle(`🏆 Leaderboard: ${config.name}`)
+        .setTitle(`🏆 Leaderboard: ${config.name} — ${mode}`)
         .setColor(COLORS.ASYLUM_GOLD as ColorResolvable)
         .setThumbnail(config.thumbnail)
         .setFooter({ text: `Page ${page}/${totalPages} • ASYLUM-BOT`, iconURL: BOT_ICON })

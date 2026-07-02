@@ -5,8 +5,7 @@ import {
     EmbedBuilder,
     Interaction,
     TextChannel,
-    User,
-    ComponentType
+    User
 } from 'discord.js';
 import { QueuePlayer } from './QueueManager';
 import { COLORS, BOT_ICON } from '../utils/constants';
@@ -15,7 +14,9 @@ import { queueManager } from './QueueManager';
 import { getGuildLanguage, t } from '../utils/i18n';
 
 interface ReadyCheckState {
+    sessionId: string;
     game: string;
+    mode: string;
     players: Map<string, { user: User; status: 'waiting' | 'accepted' | 'declined' }>;
     channelId: string;
     messageId?: string;
@@ -23,15 +24,19 @@ interface ReadyCheckState {
     timer?: NodeJS.Timeout;
 }
 
-export class ReadyCheckManager {
-    private checks: Map<string, ReadyCheckState> = new Map(); // Key: game
+// Monotonic in-process counter: sessions are memory-only, stale buttons after a
+// restart simply resolve to "no active ready check".
+let sessionSeq = 1;
 
-    async startReadyCheck(game: string, players: QueuePlayer[], channel: TextChannel) {
-        // Clear any existing check for this game
-        if (this.checks.has(game)) {
-            clearTimeout(this.checks.get(game)!.timer);
-            this.checks.delete(game);
-        }
+/**
+ * Ready checks are indexed by SESSION id (not by game): with multi-mode,
+ * several pops of the same game can run concurrently without collision.
+ */
+export class ReadyCheckManager {
+    private checks: Map<string, ReadyCheckState> = new Map(); // Key: sessionId
+
+    async startReadyCheck(game: string, mode: string, players: QueuePlayer[], channel: TextChannel) {
+        const sessionId = `s${sessionSeq++}`;
 
         const endTime = Date.now() + 60000; // 60 seconds
         const playerMap = new Map();
@@ -41,17 +46,19 @@ export class ReadyCheckManager {
         }
 
         const state: ReadyCheckState = {
+            sessionId,
             game,
+            mode,
             players: playerMap,
             channelId: channel.id,
             endTime
         };
 
-        this.checks.set(game, state);
+        this.checks.set(sessionId, state);
         await this.sendReadyEmbed(state, channel);
 
         // Start Timer
-        state.timer = setTimeout(() => this.endReadyCheck(game, false), 60000);
+        state.timer = setTimeout(() => this.endReadyCheck(sessionId, false), 60000);
     }
 
     async sendReadyEmbed(state: ReadyCheckState, channel: TextChannel) {
@@ -64,17 +71,19 @@ export class ReadyCheckManager {
             return `${icon} <@${p.user.id}>`;
         }).join('\n');
 
+        const queueName = queueManager.getConfig(state.game, state.mode)?.name ?? state.game;
+
         const embed = new EmbedBuilder()
             .setTitle(t('ready_check_title', lang))
-            .setDescription(`${t('ready_check_desc', lang)}\n\n**${t('ready_check_time', lang)}** <t:${Math.round(state.endTime / 1000)}:R>\n\n${playerList}`)
+            .setDescription(`**${queueName}**\n${t('ready_check_desc', lang)}\n\n**${t('ready_check_time', lang)}** <t:${Math.round(state.endTime / 1000)}:R>\n\n${playerList}`)
             .setColor(COLORS.WARNING as any)
             .setThumbnail(BOT_ICON)
             .setFooter({ text: `${accepted}/${total} ${t('ready_check_accepted', lang)}` });
 
         const row = new ActionRowBuilder<ButtonBuilder>()
             .addComponents(
-                new ButtonBuilder().setCustomId(`ready_accept_${state.game}`).setLabel(t('ready_check_accept_btn', lang)).setStyle(ButtonStyle.Success).setEmoji('✅'),
-                new ButtonBuilder().setCustomId(`ready_decline_${state.game}`).setLabel(t('ready_check_decline_btn', lang)).setStyle(ButtonStyle.Danger).setEmoji('❌')
+                new ButtonBuilder().setCustomId(`ready_accept_${state.sessionId}`).setLabel(t('ready_check_accept_btn', lang)).setStyle(ButtonStyle.Success).setEmoji('✅'),
+                new ButtonBuilder().setCustomId(`ready_decline_${state.sessionId}`).setLabel(t('ready_check_decline_btn', lang)).setStyle(ButtonStyle.Danger).setEmoji('❌')
             );
 
         if (state.messageId) {
@@ -93,11 +102,11 @@ export class ReadyCheckManager {
 
         const parts = interaction.customId.split('_');
         const action = parts[1]; // accept or decline
-        const game = parts[2];
+        const sessionId = parts[2];
 
-        const state = this.checks.get(game);
+        const state = this.checks.get(sessionId);
         if (!state) {
-            await interaction.reply({ content: '❌ No active ready check for this game.', ephemeral: true });
+            await interaction.reply({ content: '❌ This ready check is no longer active.', ephemeral: true });
             return;
         }
 
@@ -113,28 +122,29 @@ export class ReadyCheckManager {
         } else {
             playerState.status = 'declined';
             await interaction.update({ content: '❌ You declined the match.', components: [] });
-            await this.endReadyCheck(game, true); // End immediately if someone declines
+            await this.endReadyCheck(sessionId, true); // End immediately if someone declines
             return;
         }
 
         // Check if all accepted
         const allAccepted = Array.from(state.players.values()).every(p => p.status === 'accepted');
         if (allAccepted) {
-            await this.endReadyCheck(game, true);
+            await this.endReadyCheck(sessionId, true);
         } else {
             const channel = interaction.channel as TextChannel;
             await this.sendReadyEmbed(state, channel);
         }
     }
 
-    async endReadyCheck(game: string, success: boolean) {
-        const state = this.checks.get(game);
+    async endReadyCheck(sessionId: string, success: boolean) {
+        const state = this.checks.get(sessionId);
         if (!state) return;
 
         clearTimeout(state.timer);
-        this.checks.delete(game);
+        this.checks.delete(sessionId);
 
-        const channel = queueManager.getConfig(game) ? (await (await import('../index')).client.channels.fetch(state.channelId)) as TextChannel : null;
+        const { game, mode } = state;
+        const channel = (await (await import('../index')).client.channels.fetch(state.channelId).catch(() => null)) as TextChannel | null;
         if (!channel) return;
 
         const declinedPlayers = Array.from(state.players.values()).filter(p => p.status === 'declined' || p.status === 'waiting');
@@ -147,7 +157,7 @@ export class ReadyCheckManager {
 
             // Kick declined players (removePlayer resets their status to IDLE and refreshes the queue embed)
             for (const p of declinedPlayers) {
-                await queueManager.removePlayer(game, p.user.id);
+                await queueManager.removePlayer(game, mode, p.user.id);
                 // TODO: Add penalty (P2-4)
             }
 
@@ -160,15 +170,15 @@ export class ReadyCheckManager {
             await channel.send({ content: t('ready_check_success', lang) });
 
             // Players are still in the queue at this point: recover the original QueuePlayer objects
-            const queue = queueManager.getQueue(game);
+            const queue = queueManager.getQueue(game, mode);
             const matchPlayers = queue.filter(p => state.players.has(p.user.id));
 
             for (const p of matchPlayers) {
                 await queueManager.setPlayerState(p.user.id, 'IN_GAME');
             }
 
-            // Trigger Vote
-            await voteManager.startVote(game, matchPlayers, channel);
+            // Trigger Vote (same session id carries through the pipeline)
+            await voteManager.startVote(sessionId, game, mode, matchPlayers, channel);
         }
     }
 }
