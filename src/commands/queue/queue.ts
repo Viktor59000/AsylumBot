@@ -110,7 +110,7 @@ export const handleQueueInteraction = async (interaction: any) => {
         } else if (action === 'leave') {
             const game = parts[2];
             const lang = await getGuildLanguage(interaction.guildId);
-            const success = queueManager.removePlayer(game, user.id);
+            const success = await queueManager.removePlayer(game, user.id);
             if (!success) {
                 await interaction.reply({ content: t('queue_already_in', lang), ephemeral: true });
                 return;

@@ -1,30 +1,32 @@
 import { Client, TextChannel, EmbedBuilder } from 'discord.js';
 import { prisma } from '../utils/db';
 import { COLORS, EMOJIS } from '../utils/constants';
+import { scheduleDailyUtc } from '../utils/dailyTask';
+import { logger } from '../utils/logger';
 
 export class DecayManager {
     private client: Client;
-    private interval: NodeJS.Timeout | null = null;
+    private cancelDailyDecay?: () => void;
     private readonly DECAY_AMOUNT = 10;
     private readonly INACTIVITY_DAYS = 7;
 
     constructor(client: Client) {
         this.client = client;
-        this.startDecayCheck();
     }
 
-    startDecayCheck() {
-        // Run check every 24 hours
-        this.interval = setInterval(() => {
-            this.processDecay();
-        }, 24 * 60 * 60 * 1000);
+    /** Idempotent daily decay at 05:00 UTC (persisted in BotState, so frequent redeploys neither skip nor double it). */
+    start() {
+        if (this.cancelDailyDecay) return;
+        this.cancelDailyDecay = scheduleDailyUtc('elo_decay', 5, () => this.processDecay());
+    }
 
-        // Run immediately on startup (optional, or wait for first interval)
-        // this.processDecay();
+    destroy() {
+        this.cancelDailyDecay?.();
+        this.cancelDailyDecay = undefined;
     }
 
     async processDecay() {
-        console.log('Running Decay Check...');
+        logger.info('Running Decay Check...');
         const thresholdDate = new Date();
         thresholdDate.setDate(thresholdDate.getDate() - this.INACTIVITY_DAYS);
 
@@ -53,7 +55,7 @@ export class DecayManager {
                     data: { rating: newRating }
                 });
 
-                console.log(`Decayed ${elo.user.username} (${elo.game}) by ${lost} points.`);
+                logger.info(`Decayed ${elo.user.username} (${elo.game}) by ${lost} points.`);
 
                 // Notify User (Try DM)
                 try {

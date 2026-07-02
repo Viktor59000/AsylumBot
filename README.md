@@ -52,16 +52,14 @@ The bot currently supports Elo tracking and matchmaking for:
 *   `/leaderboard <game>`: View the top 10 players for a specific game.
 *   `/role_menu`: Open the Role Picker to select your games and roles.
 
-#### Queue & Matchmaking
-*   `/queue join <game>`: Join the matchmaking queue.
-*   `/queue leave`: Leave your current queue.
-*   `/queue status`: View the current status of all queues.
+#### Profile
+*   `/ign <game> <pseudo>`: Register your in-game name (required before queuing).
+*   `/set-profile`: Guided wizard (IGN + role preferences).
 
-#### Party Management
-*   `/party invite <user>`: Invite a player to your party.
-*   `/party kick <user>`: Kick a player from your party.
-*   `/party leave`: Leave your current party.
-*   `/party promote <user>`: Promote a member to party leader.
+#### Queue & Matchmaking
+*   Joining/leaving the queue and party invites are done with the **buttons** on the permanent queue message (auto-updated).
+*   `/queue view <game>`: Post a queue embed with Join/Leave/Invite buttons.
+*   `/queue force_leave`: Emergency reset if you are stuck in a queue.
 
 ### 🛡️ Clan Commands
 
@@ -77,15 +75,30 @@ The bot currently supports Elo tracking and matchmaking for:
 
 #### Setup & Config
 *   `/setup`: Initialize the bot (creates categories, roles, and channels).
-*   `/config <game> [teamsize] [queue_banner] [win_banner]`: Configure game settings and banners.
-*   `/admin add_elo <user> <game> <amount>`: Manually add Elo to a player.
-*   `/admin remove_elo <user> <game> <amount>`: Manually remove Elo from a player.
-*   `/admin reset_elo <user> <game>`: Reset a player's Elo to default (1000).
+*   `/config`: Configure game settings and banners.
+*   `/mmr <user> <game> <action> <amount>`: Manually adjust a player's Elo.
+*   `/season`: Manage seasons.
 
 #### Moderation & Match Management
-*   `/game sub <match_id> <old_user> <new_user>`: Substitute a player in an active match.
-*   `/game cancel <match_id>`: Cancel a match without Elo loss.
-*   `/queue suspend <user> <duration> <reason>`: Temporarily ban a user from the queue.
+*   `/reportwin <match_id> <winning_team>`: Report a match result.
+*   `/sub <match_id> <old_user> <new_user>`: Substitute a player in an active match.
+*   `/cancel <match_id>`: Cancel a match without Elo loss.
+*   `/suspend <user> <duration> <reason>`: Temporarily ban a user from the queue.
+*   `/queue force_start <game>`: Force a queue to pop with the current players.
+
+---
+
+## 🛠️ Installation & Development
+
+1.  **Prerequisites**: Node.js 18+, a **PostgreSQL** database (required — the bot and the upcoming stats website share it).
+    Local quick start: `docker run -d --name asylum-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=asylumbot -p 5432:5432 postgres:16`
+2.  **Configure**: copy `.env.example` to `.env` and fill in the values (`DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `DATABASE_URL`, optional `PLAYER_ROLE_ID`).
+3.  **Install & migrate**: `npm install`, then `npx prisma migrate deploy` (applies the schema), then `npx prisma generate`.
+4.  **Run**: `npm run dev`.
+
+**Deployment (Railway)**: run the bot as a worker and attach the managed PostgreSQL plugin; set `DATABASE_URL` to the plugin URL. The bot is crash-safe: on startup it resets stuck player statuses, abandons unreported matches and deletes orphaned match channels.
+
+> Note: Valorant Tracker.gg integration is **not implemented yet** (planned).
 
 ---
 

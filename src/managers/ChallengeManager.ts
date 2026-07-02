@@ -1,30 +1,33 @@
 import { Client, EmbedBuilder, User } from 'discord.js';
 import { prisma } from '../utils/db';
 import { COLORS, EMOJIS } from '../utils/constants';
+import { scheduleDailyUtc } from '../utils/dailyTask';
+import { logger } from '../utils/logger';
 
 export class ChallengeManager {
     private client: Client;
+    private cancelDailyReset?: () => void;
     private readonly REWARD_COINS = 50;
     private readonly GOAL_PLAYED = 3;
     private readonly GOAL_WON = 1;
 
     constructor(client: Client) {
         this.client = client;
-        this.startDailyReset();
     }
 
-    startDailyReset() {
-        // Reset at midnight (simplified check every hour)
-        setInterval(async () => {
-            const now = new Date();
-            if (now.getHours() === 0 && now.getMinutes() < 5) {
-                await this.resetDailyProgress();
-            }
-        }, 5 * 60 * 1000); // Check every 5 mins
+    /** Idempotent daily reset at 00:00 UTC (persisted in BotState, catches up after restart). */
+    start() {
+        if (this.cancelDailyReset) return;
+        this.cancelDailyReset = scheduleDailyUtc('challenges_daily_reset', 0, () => this.resetDailyProgress());
+    }
+
+    destroy() {
+        this.cancelDailyReset?.();
+        this.cancelDailyReset = undefined;
     }
 
     async resetDailyProgress() {
-        console.log('Resetting Daily Challenges...');
+        logger.info('Resetting Daily Challenges...');
         await prisma.dailyProgress.updateMany({
             data: {
                 matchesPlayed: 0,

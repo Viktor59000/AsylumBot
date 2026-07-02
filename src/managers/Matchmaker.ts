@@ -23,27 +23,40 @@ export class Matchmaker {
     }
 
     async createMatch(game: string, players: QueuePlayer[], mode: 'Ranked' | 'Casual' | 'Captain' = 'Ranked') {
+        const configGuildId = queueManager.getConfig(game)?.guildId;
+        const guild = (configGuildId && this.client.guilds.cache.get(configGuildId)) || this.client.guilds.cache.first();
+        if (!guild) return;
+
         const match = await prisma.match.create({
             data: {
                 game,
+                guildId: guild.id,
                 isRanked: mode === 'Ranked',
+                status: 'pending',
                 players: {
                     create: players.map(p => ({ userId: p.user.id, team: 'pending' })),
                 },
             },
         });
 
-        players.forEach(p => {
-            queueManager.removePlayerFromAllQueues(p.user.id);
-            queueManager.setPlayerState(p.user.id, 'IN_GAME');
+        for (const p of players) {
+            await queueManager.removePlayerFromAllQueues(p.user.id);
+            await queueManager.setPlayerState(p.user.id, 'IN_GAME');
             p.user.send(`✅ **Match Found!** You have been removed from all other queues.`).catch(() => { });
-        });
-
-        const guild = this.client.guilds.cache.first();
-        if (!guild) return;
+        }
 
         const lobby = await lobbyManager.createLobby(guild, match.id, game, players, mode);
         if (!lobby) return;
+
+        // Persist every match channel id right away so cleanup survives a restart (P1-2)
+        const allVoiceIds = [lobby.voiceChannelId1, lobby.voiceChannelId2, ...(lobby.extraVoiceChannelIds ?? [])].filter(Boolean);
+        await prisma.match.update({
+            where: { id: match.id },
+            data: {
+                textChannelId: lobby.textChannelId,
+                voiceChannelIds: JSON.stringify(allVoiceIds),
+            },
+        });
 
         if (mode === 'Ranked' || mode === 'Casual') {
             await this.balanceTeams(lobby);
@@ -121,11 +134,12 @@ export class Matchmaker {
             where: { id: lobby.matchId },
             data: {
                 channelId1: lobby.voiceChannelId1,
-                channelId2: lobby.voiceChannelId2
+                channelId2: lobby.voiceChannelId2,
+                status: 'live'
             }
         });
 
-        const guild = this.client.guilds.cache.get(lobby.guildId) || this.client.guilds.cache.first();
+        const guild = this.client.guilds.cache.get(lobby.guildId);
         if (guild) {
             await this.grantTeamVoiceAccess(lobby, guild);
             await lobbyManager.onMatchReady(lobby, guild);

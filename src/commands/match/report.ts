@@ -36,10 +36,15 @@ export const command = {
             return;
         }
 
+        if (match.status === 'cancelled' || match.status === 'abandoned') {
+            await interaction.reply({ content: `This match was ${match.status} and can no longer be reported.`, ephemeral: true });
+            return;
+        }
+
         // Update Match
         await prisma.match.update({
             where: { id: matchId },
-            data: { winner: winningTeam },
+            data: { winner: winningTeam, status: 'reported' },
         });
 
         // Calculate Team Averages
@@ -74,10 +79,9 @@ export const command = {
 
             eloChanges.push(`${isWinner ? '✅' : '❌'} <@${player.userId}>: ${change > 0 ? '+' : ''}${change} (${newRating})`);
 
-            // Update Challenge Progress
-            const { ChallengeManager } = await import('../../managers/ChallengeManager');
-            const challengeManager = new ChallengeManager(interaction.client);
-            await challengeManager.updateProgress(player.userId, isWinner);
+            // Update Challenge Progress (singleton — never instantiate here, it owns timers)
+            const { getManagers } = await import('../../managers/registry');
+            await getManagers().challenge.updateProgress(player.userId, isWinner);
         }
 
         const embed = new EmbedBuilder()
@@ -93,14 +97,9 @@ export const command = {
             await lobbyManager.cleanupMatch(matchId, interaction.guild);
         }
 
-        // Send Webhook Data
-        const { WebhookManager } = await import('../../managers/WebhookManager');
-        const webhookManager = new WebhookManager();
-        await webhookManager.sendMatchData(matchId);
-
-        // Update Leaderboard
-        const { LeaderboardManager } = await import('../../managers/LeaderboardManager');
-        const leaderboardManager = new LeaderboardManager(interaction.client);
-        await leaderboardManager.updateLeaderboard(match.game);
+        // Send Webhook Data + Update Leaderboard (singletons)
+        const { getManagers } = await import('../../managers/registry');
+        await getManagers().webhook.sendMatchData(matchId);
+        await getManagers().leaderboard.updateLeaderboard(match.game);
     },
 };

@@ -1,11 +1,11 @@
 import { Client, GatewayIntentBits, Collection, REST, Routes } from 'discord.js';
 import dotenv from 'dotenv';
 import { Command } from './utils/types';
+import { logger } from './utils/logger';
 import { handleQueueInteraction } from './commands/queue/queue';
 import { handleSetupInteraction } from './commands/admin/setup';
 import { handleSetProfileInteraction } from './commands/player/setProfile';
 import { voteManager } from './managers/VoteManager';
-import { RoleMenuManager } from './managers/RoleMenuManager';
 import { handleStatsInteraction } from './commands/player/stats';
 import { readyCheckManager } from './managers/ReadyCheckManager';
 import { draftManager } from './managers/DraftManager';
@@ -24,7 +24,7 @@ export class ExtendedClient extends Client {
             intents: [
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent,
+                // MessageContent removed (P1-7): the bot never reads message content.
                 GatewayIntentBits.GuildVoiceStates,
                 GatewayIntentBits.GuildMembers,
             ],
@@ -76,39 +76,42 @@ export class ExtendedClient extends Client {
 export const client = new ExtendedClient();
 
 client.once('ready', async () => {
-    console.log(`Logged in as ${client.user?.tag}!`);
-    console.log(`Currently in ${client.guilds.cache.size} servers.`);
+    logger.info(`Logged in as ${client.user?.tag}!`);
+    logger.info(`Currently in ${client.guilds.cache.size} servers.`);
 
-    // Initialize Managers
-    const { DecayManager } = await import('./managers/DecayManager');
-    new DecayManager(client);
-
-    const { ChallengeManager } = await import('./managers/ChallengeManager');
-    new ChallengeManager(client);
+    // Initialize all managers exactly once (P1-3)
+    const { initManagers } = await import('./managers/registry');
+    initManagers(client);
 
     // Unified Queue System
     const { queueManager } = await import('./managers/QueueManager');
-    const { Matchmaker } = await import('./managers/Matchmaker');
-
-    const matchmaker = new Matchmaker(client);
-    voteManager.setMatchmaker(matchmaker);
 
     try {
         const { prisma } = await import('./utils/db');
         const gameConfigs = await prisma.gameConfig.findMany();
         for (const cfg of gameConfigs) {
             if (cfg.queueChannelId) {
-                queueManager.setChannel(cfg.game, cfg.queueChannelId, cfg.guildId);
+                queueManager.setChannel(cfg.game, cfg.queueChannelId, cfg.guildId, cfg.queueMessageId ?? undefined);
+            } else {
+                logger.warn(`[startup] Game "${cfg.game}" configured without a queue channel.`);
             }
         }
     } catch (err) {
-        console.error('[startup] Failed to load game configs:', err);
+        logger.error('[startup] Failed to load game configs:', err);
+    }
+
+    // Crash-safety: clean up whatever a restart orphaned (P1-2)
+    try {
+        const { runStartupRecovery } = await import('./managers/RecoveryManager');
+        await runStartupRecovery(client);
+    } catch (err) {
+        logger.error('[startup] Recovery failed:', err);
     }
 
     queueManager.on('queueFull', async (game, players) => {
         const config = queueManager.getConfig(game);
         if (!config || !config.channelId) {
-            console.error(`[queueFull] No channel bound for game "${game}".`);
+            logger.error(`[queueFull] No channel bound for game "${game}".`);
             return;
         }
 
@@ -158,8 +161,8 @@ client.on('interactionCreate', async (interaction) => {
             } else if (interaction.customId.startsWith('vote_')) {
                 await voteManager.handleInteraction(interaction);
             } else if (interaction.customId.startsWith('role_select_')) {
-                const roleMenuManager = new RoleMenuManager();
-                await roleMenuManager.handleInteraction(interaction);
+                const { getManagers } = await import('./managers/registry');
+                await getManagers().roleMenu.handleInteraction(interaction);
             } else if (interaction.customId.startsWith('stats_view_')) {
                 await handleStatsInteraction(interaction);
             } else if (interaction.customId.startsWith('ready_')) {
@@ -171,8 +174,8 @@ client.on('interactionCreate', async (interaction) => {
             } else if (interaction.customId.startsWith('refresh_leaderboard_')) {
                 const game = interaction.customId.replace('refresh_leaderboard_', '');
                 await interaction.deferReply({ ephemeral: true });
-                const { LeaderboardManager } = await import('./managers/LeaderboardManager');
-                await new LeaderboardManager(client).updateLeaderboard(game);
+                const { getManagers } = await import('./managers/registry');
+                await getManagers().leaderboard.updateLeaderboard(game);
                 await interaction.editReply({ content: '🔄 Leaderboard refreshed.' });
             } else if (interaction.customId === 'rl_checkin') {
                 await interaction.reply({ content: `✅ **${interaction.user.username}** is checked in.`, ephemeral: false });
@@ -214,5 +217,50 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 });
+
+// ---- Global error handlers & graceful shutdown (P1-4) ----
+process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    logger.error('Uncaught exception:', err);
+});
+
+client.on('error', (err) => logger.error('Discord client error:', err));
+client.on('shardError', (err) => logger.error('Discord shard error:', err));
+client.on('warn', (message) => logger.warn(`Discord client warning: ${message}`));
+
+let shuttingDown = false;
+async function shutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`${signal} received — shutting down gracefully...`);
+
+    try {
+        const { destroyManagers } = await import('./managers/registry');
+        destroyManagers();
+    } catch (err) {
+        logger.error('Error while destroying managers:', err);
+    }
+
+    try {
+        await client.destroy();
+    } catch (err) {
+        logger.error('Error while destroying client:', err);
+    }
+
+    try {
+        const { prisma } = await import('./utils/db');
+        await prisma.$disconnect();
+    } catch (err) {
+        logger.error('Error while disconnecting Prisma:', err);
+    }
+
+    process.exit(0);
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 client.start();

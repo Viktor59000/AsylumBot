@@ -35,11 +35,10 @@ export class ReadyCheckManager {
 
         const endTime = Date.now() + 60000; // 60 seconds
         const playerMap = new Map();
-        players.forEach(p => {
+        for (const p of players) {
             playerMap.set(p.user.id, { user: p.user, status: 'waiting' });
-            // Mark player as BUSY in QueueManager (TODO: Implement in QueueManager)
-            queueManager.setPlayerState(p.user.id, 'READY_CHECK');
-        });
+            await queueManager.setPlayerState(p.user.id, 'READY_CHECK');
+        }
 
         const state: ReadyCheckState = {
             game,
@@ -82,7 +81,8 @@ export class ReadyCheckManager {
             const msg = await channel.messages.fetch(state.messageId).catch(() => null);
             if (msg) await msg.edit({ embeds: [embed], components: [row] });
         } else {
-            const msg = await channel.send({ content: `<@&${queueManager.getConfig(state.game)?.channelId}> Match Found!`, embeds: [embed], components: [row] });
+            const mentions = Array.from(state.players.keys()).map(id => `<@${id}>`).join(' ');
+            const msg = await channel.send({ content: `🔔 **Match Found!** ${mentions}`, embeds: [embed], components: [row] });
             state.messageId = msg.id;
         }
     }
@@ -113,14 +113,14 @@ export class ReadyCheckManager {
         } else {
             playerState.status = 'declined';
             await interaction.update({ content: '❌ You declined the match.', components: [] });
-            this.endReadyCheck(game, true); // End immediately if someone declines
+            await this.endReadyCheck(game, true); // End immediately if someone declines
             return;
         }
 
         // Check if all accepted
         const allAccepted = Array.from(state.players.values()).every(p => p.status === 'accepted');
         if (allAccepted) {
-            this.endReadyCheck(game, true);
+            await this.endReadyCheck(game, true);
         } else {
             const channel = interaction.channel as TextChannel;
             await this.sendReadyEmbed(state, channel);
@@ -137,14 +137,6 @@ export class ReadyCheckManager {
         const channel = queueManager.getConfig(game) ? (await (await import('../index')).client.channels.fetch(state.channelId)) as TextChannel : null;
         if (!channel) return;
 
-        if (success) {
-            // All accepted
-            const allAccepted = Array.from(state.players.values()).every(p => p.status === 'accepted');
-            // Double check logic: if called with success=true from decline, it means we are ending it but NOT starting match
-            // Wait, my logic above call endReadyCheck(game, true) on decline. That's confusing.
-            // Let's rely on checking the statuses.
-        }
-
         const declinedPlayers = Array.from(state.players.values()).filter(p => p.status === 'declined' || p.status === 'waiting');
         const acceptedPlayers = Array.from(state.players.values()).filter(p => p.status === 'accepted');
         const lang = await getGuildLanguage(channel.guild.id);
@@ -153,36 +145,27 @@ export class ReadyCheckManager {
             // Match Cancelled
             await channel.send({ content: t('ready_check_cancelled', lang, { count: declinedPlayers.length }) });
 
-            // Kick declined players
-            declinedPlayers.forEach(p => {
-                queueManager.removePlayer(game, p.user.id);
-                queueManager.setPlayerState(p.user.id, 'IDLE');
-                // TODO: Add penalty
-            });
+            // Kick declined players (removePlayer resets their status to IDLE and refreshes the queue embed)
+            for (const p of declinedPlayers) {
+                await queueManager.removePlayer(game, p.user.id);
+                // TODO: Add penalty (P2-4)
+            }
 
             // Return accepted players to queue (they are already there, just update state)
-            acceptedPlayers.forEach(p => {
-                queueManager.setPlayerState(p.user.id, 'IN_QUEUE');
-            });
-
-            // Update Queue Embed
-            // We need to trigger a queue update
-            // queueManager.emit('queueUpdate', game); // This might be needed if we want to refresh the embed
+            for (const p of acceptedPlayers) {
+                await queueManager.setPlayerState(p.user.id, 'QUEUED');
+            }
         } else {
             // Match Start
             await channel.send({ content: t('ready_check_success', lang) });
 
-            // Convert to QueuePlayer[]
-            const players: QueuePlayer[] = [];
-            // We need to get the original QueuePlayer objects or reconstruct them.
-            // Ideally we kept them. But we only have User objects here.
-            // We can fetch them from QueueManager since they are still in queue?
-            // Yes, they are still in queue until we remove them or match starts.
+            // Players are still in the queue at this point: recover the original QueuePlayer objects
             const queue = queueManager.getQueue(game);
             const matchPlayers = queue.filter(p => state.players.has(p.user.id));
 
-            // Mark as IN_GAME (or VOTING)
-            matchPlayers.forEach(p => queueManager.setPlayerState(p.user.id, 'IN_GAME')); // Or 'VOTING'
+            for (const p of matchPlayers) {
+                await queueManager.setPlayerState(p.user.id, 'IN_GAME');
+            }
 
             // Trigger Vote
             await voteManager.startVote(game, matchPlayers, channel);

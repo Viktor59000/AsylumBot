@@ -27,7 +27,7 @@ export class AFKManager {
         const queues = queueManager.getAllQueues();
         const now = Date.now();
 
-        queues.forEach((queue, game) => {
+        for (const [game, queue] of queues) {
             // iterate backwards to allow removal
             for (let i = queue.length - 1; i >= 0; i--) {
                 const player = queue[i];
@@ -36,18 +36,18 @@ export class AFKManager {
 
                 if (diff > this.REMOVAL_THRESHOLD_MS) {
                     // Remove
-                    queueManager.removePlayer(game, player.user.id);
+                    await queueManager.removePlayer(game, player.user.id);
                     player.user.send('❌ **Removed from queue due to inactivity.**').catch(() => { });
                     this.warnedUsers.delete(player.user.id);
                 } else if (diff > this.WARNING_THRESHOLD_MS) {
                     // Warn
                     if (!this.warnedUsers.has(player.user.id)) {
-                        this.sendWarning(player, game);
+                        await this.sendWarning(player, game);
                         this.warnedUsers.add(player.user.id);
                     }
                 }
             }
-        });
+        }
     }
 
     async sendWarning(player: QueuePlayer, game: string) {

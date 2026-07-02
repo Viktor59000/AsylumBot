@@ -173,6 +173,15 @@ export class LobbyManager {
         const match = await prisma.match.findUnique({ where: { id: matchId }, include: { players: true } });
         if (match?.channelId1) channelIds.add(match.channelId1);
         if (match?.channelId2) channelIds.add(match.channelId2);
+        if (match?.textChannelId) channelIds.add(match.textChannelId);
+        if (match?.voiceChannelIds) {
+            try {
+                const ids: string[] = JSON.parse(match.voiceChannelIds);
+                ids.forEach(id => channelIds.add(id));
+            } catch (err) {
+                console.error(`[cleanupMatch] Invalid voiceChannelIds JSON for match #${matchId}`);
+            }
+        }
         if (!lobby) {
             const orphanText = guild.channels.cache.find(c => c.name === `lobby-${matchId}` && c.type === ChannelType.GuildText);
             if (orphanText) channelIds.add(orphanText.id);

@@ -1,7 +1,7 @@
 import { prisma } from '../utils/db';
 import { User } from '@prisma/client';
 
-export type UserStatus = 'IDLE' | 'QUEUED' | 'LOBBY' | 'INGAME';
+export type UserStatus = 'IDLE' | 'QUEUED' | 'READY_CHECK' | 'IN_GAME';
 
 export class UserManager {
 

@@ -1,7 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, TextChannel } from 'discord.js';
-import { RoleMenuManager } from '../../managers/RoleMenuManager';
-
-const roleMenuManager = new RoleMenuManager();
+import { getManagers } from '../../managers/registry';
 
 export const command = {
     data: new SlashCommandBuilder()
@@ -43,7 +41,7 @@ export const command = {
 
             if (!interaction.guildId) return;
 
-            await roleMenuManager.addOption(interaction.guildId, label, emoji, role.id);
+            await getManagers().roleMenu.addOption(interaction.guildId, label, emoji, role.id);
             await interaction.reply({ content: `✅ Added option: **${label}** ${emoji} -> ${role.name}`, ephemeral: true });
 
         } else if (subcommand === 'post') {
@@ -55,7 +53,7 @@ export const command = {
                 return;
             }
 
-            const result = await roleMenuManager.postMenu(channel, imageUrl);
+            const result = await getManagers().roleMenu.postMenu(channel, imageUrl);
 
             if (result.success) {
                 await interaction.reply({ content: `✅ Role Menu posted in <#${channel.id}>.`, ephemeral: true });

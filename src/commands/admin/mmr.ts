@@ -87,8 +87,7 @@ export const command = {
         });
 
         // Update Leaderboard
-        const { LeaderboardManager } = await import('../../managers/LeaderboardManager');
-        const leaderboardManager = new LeaderboardManager(interaction.client);
-        await leaderboardManager.updateLeaderboard(game);
+        const { getManagers } = await import('../../managers/registry');
+        await getManagers().leaderboard.updateLeaderboard(game);
     },
 };

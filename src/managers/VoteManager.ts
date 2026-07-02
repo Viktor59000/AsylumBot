@@ -21,6 +21,7 @@ interface VoteState {
     messageId?: string;
     channelId: string;
     endTime: number;
+    timer?: NodeJS.Timeout;
 }
 
 export class VoteManager {
@@ -34,6 +35,10 @@ export class VoteManager {
     }
 
     async startVote(game: string, players: QueuePlayer[], channel: TextChannel) {
+        // Cancel any stale vote for this game so its timer can't fire on the new one
+        const existing = this.votes.get(game);
+        if (existing?.timer) clearTimeout(existing.timer);
+
         const endTime = Date.now() + 30000; // 30 seconds
         const state: VoteState = {
             game,
@@ -46,8 +51,8 @@ export class VoteManager {
         this.votes.set(game, state);
         await this.sendVoteEmbed(state, channel);
 
-        // Start Timer
-        setTimeout(() => this.endVote(game), 30000);
+        // Start Timer (stored so it can be cancelled)
+        state.timer = setTimeout(() => this.endVote(game), 30000);
     }
 
     async sendVoteEmbed(state: VoteState, channel: TextChannel) {
@@ -161,6 +166,7 @@ export class VoteManager {
         const state = this.votes.get(game);
         if (!state) return;
 
+        if (state.timer) clearTimeout(state.timer);
         this.votes.delete(game);
 
         // Count votes

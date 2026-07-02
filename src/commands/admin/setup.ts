@@ -398,7 +398,7 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                 });
 
                 const { queueManager } = await import('../../managers/QueueManager');
-                queueManager.setChannel(selectedGame, queueChannel.id, guild.id);
+                queueManager.setChannel(selectedGame, queueChannel.id, guild.id, queueMessage.id);
             }
 
         } catch (error) {

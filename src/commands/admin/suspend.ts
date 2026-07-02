@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
-import { PenaltyManager } from '../../managers/PenaltyManager';
+import { getManagers } from '../../managers/registry';
 
 export const command = {
     data: new SlashCommandBuilder()
@@ -23,8 +23,7 @@ export const command = {
         const duration = interaction.options.getInteger('duration', true);
         const reason = interaction.options.getString('reason', true);
 
-        const penaltyManager = new PenaltyManager(interaction.client);
-        await penaltyManager.suspendUser(user.id, duration, reason);
+        await getManagers().penalty.suspendUser(user.id, duration, reason);
 
         await interaction.editReply(`✅ Suspended **${user.tag}** for **${duration} minutes**. Reason: ${reason}`);
     }

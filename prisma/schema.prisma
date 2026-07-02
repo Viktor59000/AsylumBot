@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -69,14 +69,18 @@ model Elo {
 model Match {
   id        Int      @id @default(autoincrement())
   game      String
+  guildId   String?
   createdAt DateTime @default(now())
   winner    String?  // 'team1' or 'team2'
   map       String?
   isRanked  Boolean  @default(true)
+  status    String   @default("pending") // pending, live, reported, cancelled, abandoned
   seasonId  Int?
   channelId1 String?
   channelId2 String?
-  
+  textChannelId   String?
+  voiceChannelIds String? // JSON array of ALL voice channel ids (reliable cleanup after restart)
+
   players   MatchPlayer[]
   season    Season?  @relation(fields: [seasonId], references: [id])
 }
@@ -181,6 +185,12 @@ model RoleMenuOption {
   roleId    String
   
   @@unique([guildId, roleId])
+}
+
+// Generic key/value store for bot-level persistent state (last cron runs, etc.)
+model BotState {
+  key   String @id
+  value String
 }
 
 model Clan {

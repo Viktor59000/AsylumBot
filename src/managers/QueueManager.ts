@@ -17,6 +17,7 @@ export interface GameConfig {
     teamSize: number;
     channelId: string;
     guildId?: string;
+    queueMessageId?: string;
 }
 
 export class QueueManager extends EventEmitter {
@@ -41,11 +42,12 @@ export class QueueManager extends EventEmitter {
         return this.queues.get(game)!;
     }
 
-    setChannel(game: string, channelId: string, guildId?: string) {
+    setChannel(game: string, channelId: string, guildId?: string, queueMessageId?: string) {
         const existing = this.configs.get(game);
         if (existing) {
             existing.channelId = channelId;
             if (guildId) existing.guildId = guildId;
+            if (queueMessageId) existing.queueMessageId = queueMessageId;
         } else {
             const base = GAME_CONFIGS[game as keyof typeof GAME_CONFIGS];
             this.configs.set(game, {
@@ -53,6 +55,7 @@ export class QueueManager extends EventEmitter {
                 teamSize: base?.teamSize ?? 5,
                 channelId,
                 guildId,
+                queueMessageId,
             });
         }
     }
@@ -147,9 +150,7 @@ export class QueueManager extends EventEmitter {
     }
 
     // Helper for legacy support or internal use, though direct UserManager usage is preferred.
-    async setPlayerState(userId: string, state: any) {
-        // Cast to UserStatus if needed, but 'IN_QUEUE' matches.
-        // This is mostly for compatibility if other files call it.
+    async setPlayerState(userId: string, state: import('./UserManager').UserStatus) {
         await UserManager.setStatus(userId, state);
     }
 

@@ -71,7 +71,7 @@ export const command = {
 
         const { UserManager } = await import('../../managers/UserManager');
         await UserManager.resetStatus(oldPlayer.id).catch(() => { });
-        await UserManager.setStatus(newPlayer.id, 'INGAME').catch(() => { });
+        await UserManager.setStatus(newPlayer.id, 'IN_GAME').catch(() => { });
 
         await interaction.reply({ content: `Substituted <@${oldPlayer.id}> with <@${newPlayer.id}> in Match #${matchId}.`, ephemeral: false });
     },
