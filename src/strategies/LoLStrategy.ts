@@ -62,28 +62,15 @@ export class LoLStrategy implements GameStrategy {
 
         // 4. Attach Banner
         const files: AttachmentBuilder[] = [];
-        const bannerPath = AssetManager.getAssetPath(lobby.game, 'live_banner');
+        const bannerPath = AssetManager.getBanner(lobby.game, lobby.queueMode, 'live_banner');
         if (bannerPath) {
             const name = bannerPath.split(/[\\/]/).pop()!;
             embed.setImage(`attachment://${name}`);
             files.push(new AttachmentBuilder(bannerPath, { name }));
         }
 
-        // 5. Buttons (Report Result)
-        const row = new ActionRowBuilder<ButtonBuilder>()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('match_report_win')
-                    .setLabel('Report Victory')
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('🏆'),
-                new ButtonBuilder()
-                    .setCustomId('match_cancel')
-                    .setLabel('Cancel Match')
-                    .setStyle(ButtonStyle.Danger)
-            );
-
-        const msg = await channel.send({ embeds: [embed], components: [row], files });
+        // 5. Send lobby embed (report controls are posted by ReportManager)
+        const msg = await channel.send({ embeds: [embed], files });
         await msg.pin().catch(() => { });
 
         // Mention players
@@ -92,13 +79,6 @@ export class LoLStrategy implements GameStrategy {
     }
 
     async handleInteraction(interaction: Interaction, lobby: LobbyState): Promise<void> {
-        // Will handle report buttons later or delegate to shared MatchManager?
-        // Ideally MatchManager handles generic reporting, Strategy handles specifics.
-        // For now, these buttons might be handled globally or we implement specific logic here.
-        if (!interaction.isButton()) return;
-
-        if (interaction.customId === 'match_report_win') {
-            await interaction.reply({ content: 'Report functionality coming in next update!', ephemeral: true });
-        }
+        // Reporting is handled globally by ReportManager.
     }
 }

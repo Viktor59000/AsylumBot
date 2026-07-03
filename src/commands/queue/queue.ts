@@ -78,7 +78,7 @@ export const command = {
             const queue = queueManager.getQueue(game, mode);
             const required = queueManager.getRequiredPlayers(game, mode);
 
-            const { embed, files } = createQueueEmbed(game, mode, queue, required);
+            const { embed, files } = await createQueueEmbed(game, mode, queue, required, interaction.guild);
 
             await interaction.reply({ embeds: [embed], components: [buildQueueButtons(game, mode)], files });
         } else if (subcommand === 'force_leave') {

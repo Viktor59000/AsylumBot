@@ -16,8 +16,14 @@ The bot supports Elo tracking and matchmaking per **(game, mode)** — each enab
 `/setup` lets you pick which modes to enable per game (multi-select). Several matches of the same game can run in parallel across modes.
 
 **Two result engines** (`matchType`):
-*   `tvt` — two teams, binary winner → `/reportwin`
-*   `placement` — N teams ranked 1→N → `/reportplacement match_id:<id> ranking:3,1,4,2` (partial rankings accepted; Elo scales with placement vs the field). Placement modes skip the team-formation vote.
+*   `tvt` — two teams, binary winner → **buttons in the match lobby**: one team claims, the opposing team confirms (or contests → admins notified). `/reportwin` remains as admin fallback.
+*   `placement` — N teams ranked 1→N → **position select in the match lobby**: each team picks its final position, auto-validates when complete (admin can force a partial). `/reportplacement` remains as admin fallback. Elo scales with placement vs the field; placement modes skip the team-formation vote.
+
+Results are posted to `#match-history` and logged to `#inhouse-admin-logs`.
+
+**Anti-AFK (opt-in per game/mode)**: `/config voice_gate:true` requires being in a voice channel (e.g. the 🔊 Waiting Room created by `/setup`) to accept the ready-check; players already in voice are auto-moved to their team channel at match start; declining/ignoring a ready-check applies an escalating queue-ban (5 → 15 → 30 min).
+
+**Tracker links**: `/ign` replies with deep-links to OP.GG/U.GG (LoL), Tracker.gg (Valorant), tactics.tools/MetaTFT (TFT), RL Tracker & co — built from the IGN, no API key needed.
 
 ---
 

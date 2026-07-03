@@ -268,6 +268,17 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                 createdChannels[ch.name] = channel;
             }
 
+            // 2bis. Waiting Room voice channel (voice gate / anti-AFK, DESIGN §6.5)
+            const waitingRoomName = '🔊 Waiting Room';
+            let waitingRoom = guild.channels.cache.find(c => c.name === waitingRoomName && c.parentId === mainCategory.id);
+            if (!waitingRoom) {
+                waitingRoom = await guild.channels.create({
+                    name: waitingRoomName,
+                    type: ChannelType.GuildVoice,
+                    parent: mainCategory.id,
+                });
+            }
+
             // 3. Create Ongoing Category
             const ongoingCategoryName = `Ongoing ${gameConfig.name} Games`;
             let ongoingCategory = guild.channels.cache.find(c => c.name === ongoingCategoryName && c.type === ChannelType.GuildCategory) as CategoryChannel;
@@ -374,8 +385,8 @@ export const handleSetupInteraction = async (interaction: Interaction) => {
                     }) as TextChannel;
                 }
 
-                const requiredPlayers = modeCfg.teamSize * 2;
-                const { embed: queueEmbed, files: queueFiles } = createQueueEmbed(selectedGame, mode, [], requiredPlayers);
+                const requiredPlayers = modeCfg.teamSize * modeCfg.teamCount;
+                const { embed: queueEmbed, files: queueFiles } = await createQueueEmbed(selectedGame, mode, [], requiredPlayers, guild);
 
                 const queueMessage = await queueChannel.send({
                     content: `**${gameConfig.name} ${modeCfg.name} Queue** (${selectedRegion})`,

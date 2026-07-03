@@ -42,7 +42,7 @@ export class QueueMessageUpdater {
 
         const queue = queueManager.getQueue(game, mode);
         const required = queueManager.getRequiredPlayers(game, mode);
-        const { embed, files } = createQueueEmbed(game, mode, queue, required);
+        const { embed, files } = await createQueueEmbed(game, mode, queue, required, channel.guild);
         await message.edit({ embeds: [embed], files });
     }
 

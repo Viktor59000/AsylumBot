@@ -22,6 +22,7 @@ export interface QueueConfig {
     channelId: string;
     guildId?: string;
     queueMessageId?: string;
+    voiceGate?: boolean; // require voice presence to accept the ready-check
 }
 
 /**
@@ -233,6 +234,11 @@ export class QueueManager extends EventEmitter {
     /** All configured modes of a game. */
     getGameConfigs(game: string): QueueConfig[] {
         return Array.from(this.configs.values()).filter(c => c.game === game);
+    }
+
+    setVoiceGate(game: string, mode: string, enabled: boolean) {
+        const config = this.configs.get(queueKey(game, mode));
+        if (config) config.voiceGate = enabled;
     }
 
     forceStart(game: string, mode: string): { success: boolean; reason?: string } {

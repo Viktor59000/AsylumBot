@@ -62,7 +62,7 @@ export class RLStrategy implements GameStrategy {
 
         // 5. Attach Banner
         const files: AttachmentBuilder[] = [];
-        const bannerPath = AssetManager.getAssetPath(lobby.game, 'live_banner');
+        const bannerPath = AssetManager.getBanner(lobby.game, lobby.queueMode, 'live_banner');
         if (bannerPath) {
             const name = bannerPath.split(/[\\/]/).pop()!;
             embed.setImage(`attachment://${name}`);

@@ -332,36 +332,37 @@ export class Matchmaker {
         });
     }
 
-    async grantTeamVoiceAccess(lobby: any, guild: any) {
-        const grant = async (voiceId: string, users: User[]) => {
-            if (!voiceId) return;
-            const channel = guild.channels.cache.get(voiceId) ?? await guild.channels.fetch(voiceId).catch(() => null);
-            if (!channel) return;
-            for (const u of users) {
-                await channel.permissionOverwrites.edit(u.id, { ViewChannel: true, Connect: true, Speak: true })
-                    .catch((err: any) => console.error(`[grantTeamVoiceAccess] ${u.id}:`, err?.message));
+    /**
+     * Grants voice access to a team channel and auto-moves members who are
+     * already connected to any voice channel (DESIGN §6.5 — a player not in
+     * voice simply isn't moved).
+     */
+    private async grantAndMove(guild: any, voiceId: string, users: User[]) {
+        if (!voiceId) return;
+        const channel = guild.channels.cache.get(voiceId) ?? await guild.channels.fetch(voiceId).catch(() => null);
+        if (!channel) return;
+        for (const u of users) {
+            await channel.permissionOverwrites.edit(u.id, { ViewChannel: true, Connect: true, Speak: true })
+                .catch((err: any) => console.error(`[grantVoice] ${u.id}:`, err?.message));
+            const member = guild.members.cache.get(u.id) ?? await guild.members.fetch(u.id).catch(() => null);
+            if (member?.voice?.channelId && member.voice.channelId !== channel.id) {
+                await member.voice.setChannel(channel).catch(() => { /* not connected anymore */ });
             }
-        };
-        await grant(lobby.voiceChannelId1, lobby.team1);
-        await grant(lobby.voiceChannelId2, lobby.team2);
+        }
+    }
+
+    async grantTeamVoiceAccess(lobby: any, guild: any) {
+        await this.grantAndMove(guild, lobby.voiceChannelId1, lobby.team1);
+        await this.grantAndMove(guild, lobby.voiceChannelId2, lobby.team2);
     }
 
     /** Placement matches: shared layout → everyone in one channel; perTeam → team i → channel i. */
     async grantPlacementVoiceAccess(lobby: any, guild: any) {
         const teams: User[][] = lobby.teams ?? [];
-        const grant = async (voiceId: string, users: User[]) => {
-            if (!voiceId) return;
-            const channel = guild.channels.cache.get(voiceId) ?? await guild.channels.fetch(voiceId).catch(() => null);
-            if (!channel) return;
-            for (const u of users) {
-                await channel.permissionOverwrites.edit(u.id, { ViewChannel: true, Connect: true, Speak: true })
-                    .catch((err: any) => console.error(`[grantPlacementVoiceAccess] ${u.id}:`, err?.message));
-            }
-        };
 
         const layout = getModeConfig(lobby.game, lobby.queueMode)?.voiceLayout ?? 'perTeam';
         if (layout === 'shared') {
-            await grant(lobby.voiceChannelId1, teams.flat());
+            await this.grantAndMove(guild, lobby.voiceChannelId1, teams.flat());
             return;
         }
 
@@ -369,7 +370,7 @@ export class Matchmaker {
             [lobby.voiceChannelId1, lobby.voiceChannelId2, ...(lobby.extraVoiceChannelIds ?? [])].filter(Boolean)
         ));
         for (let i = 0; i < teams.length; i++) {
-            await grant(allVoiceIds[i], teams[i]);
+            await this.grantAndMove(guild, allVoiceIds[i], teams[i]);
         }
     }
 

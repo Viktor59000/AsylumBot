@@ -40,6 +40,24 @@ export class PenaltyManager {
         }
     }
 
+    /**
+     * No-show/dodge penalty (ready-check declined or expired): escalating
+     * queue-ban 5 → 15 → 30 min based on offences in the last 24h.
+     * Returns the applied duration in minutes.
+     */
+    async applyNoShowPenalty(userId: string, context: string): Promise<number> {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const recentOffences = await prisma.penalty.count({
+            where: { userId, type: 'queue_ban', createdAt: { gt: since } }
+        });
+
+        const durations = [5, 15, 30];
+        const duration = durations[Math.min(recentOffences, durations.length - 1)];
+
+        await this.suspendUser(userId, duration, `No-show: ${context}`);
+        return duration;
+    }
+
     async isSuspended(userId: string): Promise<{ suspended: boolean; reason?: string; expiresAt?: Date }> {
         const activePenalty = await prisma.penalty.findFirst({
             where: {

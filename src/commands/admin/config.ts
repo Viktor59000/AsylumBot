@@ -26,11 +26,15 @@ export const command = {
         )
         .addIntegerOption((option) =>
             option.setName('teamsize').setDescription('Players per team').setRequired(false),
+        )
+        .addBooleanOption((option) =>
+            option.setName('voice_gate').setDescription('Require being in voice to accept the ready-check').setRequired(false),
         ),
     async execute(interaction: ChatInputCommandInteraction) {
         const game = interaction.options.getString('game', true);
         const mode = interaction.options.getString('mode') ?? getDefaultMode(game);
         const teamSize = interaction.options.getInteger('teamsize');
+        const voiceGate = interaction.options.getBoolean('voice_gate');
 
         const config = queueManager.getConfig(game, mode);
         if (!config) {
@@ -45,11 +49,21 @@ export const command = {
             updates.push(`Team Size: **${teamSize}**`);
         }
 
+        if (voiceGate !== null && interaction.guildId) {
+            queueManager.setVoiceGate(game, mode, voiceGate);
+            const { prisma } = await import('../../utils/db');
+            await prisma.gameConfig.updateMany({
+                where: { guildId: interaction.guildId, game, mode },
+                data: { voiceGateEnabled: voiceGate },
+            });
+            updates.push(`Voice gate (ready-check): **${voiceGate ? 'ON 🔊' : 'OFF'}**`);
+        }
+
         if (updates.length > 0) {
             await interaction.reply({ content: `✅ Updated **${config.name}** configuration:\n${updates.join('\n')}` });
         } else {
             await interaction.reply({
-                content: `ℹ️ **${config.name}** configuration:\nTeam Size: ${config.teamSize}\nTotal Players: ${config.teamSize * 2}`
+                content: `ℹ️ **${config.name}** configuration:\nTeam Size: ${config.teamSize}\nTotal Players: ${config.teamSize * config.teamCount}\nVoice gate: ${config.voiceGate ? 'ON 🔊' : 'OFF'}`
             });
         }
     },

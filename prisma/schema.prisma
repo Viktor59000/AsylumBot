@@ -155,6 +155,7 @@ model GameConfig {
   webhookUrl            String?
   queueMessageId        String? // ID of the permanent queue message for auto-updates
   leaderboardMessageId  String? // ID of the permanent leaderboard message (edited in place)
+  voiceGateEnabled      Boolean @default(false) // require being in voice to accept the ready-check
 
   @@unique([guildId, game, mode], name: "guildId_game_mode")
 }

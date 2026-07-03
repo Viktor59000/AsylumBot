@@ -8,10 +8,21 @@ const GAME_FOLDER_MAP: Record<string, string> = {
     'cs2': 'counter_strike_2',
     'r6s': 'rainbow_six_siege',
     'lol': 'league_of_legends',
-    'valorant': 'valorant'
+    'valorant': 'valorant',
+    'arena': 'lol_arena',
+    'tft': 'teamfight_tactics'
 };
 
 export class AssetManager {
+    /**
+     * Mode-aware banner lookup: `<kind>_<mode>` (e.g. queue_banner_1v1) first,
+     * then the game-level `<kind>`, then the global fallback. Returns null if
+     * nothing exists — callers keep their placeholder image in that case.
+     */
+    static getBanner(game: string, mode: string, kind: string): string | null {
+        return this.getAssetPath(game, `${kind}_${mode}`) ?? this.getAssetPath(game, kind);
+    }
+
     static getAssetPath(game: string, assetName: string): string | null {
         const gameFolder = GAME_FOLDER_MAP[game];
         if (!gameFolder) return null;

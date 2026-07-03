@@ -148,5 +148,56 @@ Serveur Discord de **test** (vide), bot lancé avec `npm run dev`. Coche au fur 
 
 ---
 
+## LOT 4 — Refonte UX (file enrichie, vocal-gate, report boutons, trackers, bannières)
+
+### Pré-vol Lot 4
+- [ ] `git checkout lot-4-ux` puis `npx prisma migrate deploy` → migration `lot4_voice_gate` appliquée
+- [ ] `npx tsc --noEmit` → 0 erreur
+- [ ] Re-lancer `/setup` sur un jeu déjà configuré : idempotent, ajoute le **« 🔊 Waiting Room »** manquant dans la catégorie
+
+### A. Embed de file enrichi
+- [ ] `/set-profile` (rôle déclaré) + `/ign`, puis rejoindre une file → chaque ligne montre : `@joueur — <rôle> • ⭐<elo> (<rang>)`
+- [ ] Barre de progression `▰▰▱…` + compteur **X/N** dans la description ; passe à « 🔔 Queue full! » quand plein
+- [ ] Être **en vocal** en rejoignant → **🔊** apparaît sur sa ligne (l'embed permanent se rafraîchit tout seul, throttle 2 s)
+- [ ] Inviter un duo → **👥¹** sur les deux lignes
+
+### B. ⭐ Report par boutons (tvt) — le flux sécurisé
+- [ ] Lancer un match RL 1v1/2v2 → message épinglé **« 🏁 Result report »** avec `Team 1 won` / `Team 2 won`
+- [ ] Un **non-participant** clique → refusé (« Only match participants... »)
+- [ ] Un participant clique « Team 1 won » → passe en attente : boutons **Confirm / Contest**
+- [ ] Un joueur de la **même équipe** clique Confirm → refusé (« opposing team »)
+- [ ] Un joueur de l'équipe **adverse** clique Confirm → résultat validé : embed Elo dans le lobby, **posté dans `#match-history`**, **log dans `#inhouse-admin-logs`**, salons supprimés, re-queue OK
+- [ ] Refaire un match → **Contest** → log admin « Result contested », boutons re-proposés, un admin peut trancher (bouton ou `/reportwin`)
+- [ ] `/reportwin` est désormais **réservé admin** (invisible pour un joueur normal)
+
+### C. Report par positions (placement)
+- [ ] TFT solo force_start à 2-3 → message épinglé avec **select « Report YOUR team's position »**
+- [ ] Chaque joueur choisit sa position ; deux équipes sur la même position → refus (« already claimed »)
+- [ ] Quand toutes les équipes ont choisi → **finalisation auto** (Elo + history + logs + cleanup)
+- [ ] Variante : seulement 2 équipes sur 3 choisissent → bouton **« Finalize now (admin) »** valide le partiel (admin only)
+
+### D. Vocal-gate + auto-move + pénalité no-show
+- [ ] `/config game:rl mode:1v1 voice_gate:true` → confirmé « Voice gate: ON 🔊 »
+- [ ] File pleine → **Accept hors vocal refusé** (« connect to a voice channel ») ; se mettre dans le Waiting Room → Accept passe
+- [ ] Au lancement : les joueurs **déjà en vocal sont déplacés automatiquement** vers leur salon d'équipe
+- [ ] Laisser expirer / refuser un ready-check → **queue-ban 5 min** (DM reçu) + **log admin** ; re-join refusé (« Suspended until... ») ; récidive dans les 24 h → **15 min**
+- [ ] `voice_gate:false` → l'accept hors vocal remarche (opt-in réel)
+
+### E. Liens trackers à l'/ign
+- [ ] `/ign game:lol pseudo:Faker#KR1` → réponse avec liens **OP.GG / U.GG** cliquables (région du serveur)
+- [ ] `/ign game:valorant pseudo:Name#Tag` → lien **Tracker.gg** ; `game:tft` → **tactics.tools/MetaTFT** ; `game:rl` → recherche RL Tracker
+- [ ] Aucune clé API requise pour ces liens (la clé Riot en `.env` servira au module preview, lot ultérieur)
+
+### F. Bannières par jeu/mode
+- [ ] Sans assets : les embeds gardent l'image placeholder, **aucun crash**
+- [ ] Déposer `assets/rocket_league/queue_banner_1v1.png` → l'embed de la file **rl-1v1** l'utilise (et pas la 2v2)
+- [ ] Déposer `assets/rocket_league/queue_banner.png` → utilisé par les autres modes RL (fallback jeu)
+
+### G. Non-régression
+- [ ] Cycle complet 2v2 : join → pop → vote → match → report boutons → history → re-queue
+- [ ] Ctrl+C en plein match → relance → cleanup, `abandoned`, re-queue (les claims de report en cours sont perdus au restart : re-cliquer, comportement attendu)
+
+---
+
 ## Comment reporter un bug ici
 Copie dans le chat : (1) ce que tu as fait, (2) ce qui était attendu, (3) ce qui s'est passé, (4) les **logs console** au moment du bug (masque tout secret). Je corrige avant de passer au lot suivant.

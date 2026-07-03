@@ -38,6 +38,12 @@ export const command = {
             data: { status: 'cancelled' },
         });
 
+        if (interaction.guild) {
+            const { logAdmin } = await import('../../utils/adminLog');
+            await logAdmin(interaction.guild, match.game, '🛑 Match cancelled',
+                `Match **#${matchId}** (${match.game} ${match.mode}) cancelled by <@${interaction.user.id}>.`);
+        }
+
         await interaction.reply({ content: `Match #${matchId} has been cancelled.`, ephemeral: false });
     },
 };

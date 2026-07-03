@@ -117,6 +117,20 @@ export class ReadyCheckManager {
         }
 
         if (action === 'accept') {
+            // Voice gate (DESIGN §6.5, opt-in per game/mode): you must be in a
+            // voice channel of the server to accept — kills click-and-vanish AFKs.
+            if (queueManager.getConfig(state.game, state.mode)?.voiceGate) {
+                const member = interaction.guild?.members.cache.get(interaction.user.id)
+                    ?? await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+                if (!member?.voice?.channelId) {
+                    await interaction.reply({
+                        content: '🔊 **Voice check:** connect to a voice channel (e.g. the Waiting Room) to accept the match.',
+                        ephemeral: true
+                    });
+                    return;
+                }
+            }
+
             playerState.status = 'accepted';
             await interaction.deferUpdate();
         } else {
@@ -155,10 +169,19 @@ export class ReadyCheckManager {
             // Match Cancelled
             await channel.send({ content: t('ready_check_cancelled', lang, { count: declinedPlayers.length }) });
 
-            // Kick declined players (removePlayer resets their status to IDLE and refreshes the queue embed)
+            // Kick declined/AFK players + escalating no-show penalty (P2-4)
+            const { getManagers } = await import('./registry');
+            const { logAdmin } = await import('../utils/adminLog');
+            const queueName = queueManager.getConfig(game, mode)?.name ?? game;
             for (const p of declinedPlayers) {
                 await queueManager.removePlayer(game, mode, p.user.id);
-                // TODO: Add penalty (P2-4)
+                const minutes = await getManagers().penalty
+                    .applyNoShowPenalty(p.user.id, `ready-check ${queueName}`)
+                    .catch(() => 0);
+                if (minutes > 0) {
+                    await logAdmin(channel.guild, game, '⏱️ No-show penalty',
+                        `<@${p.user.id}> — ready-check **${queueName}** declined/expired → queue-ban **${minutes} min**.`);
+                }
             }
 
             // Return accepted players to queue (they are already there, just update state)

@@ -7,6 +7,7 @@ import { PenaltyManager } from './PenaltyManager';
 import { WebhookManager } from './WebhookManager';
 import { RoleMenuManager } from './RoleMenuManager';
 import { QueueMessageUpdater } from './QueueMessageUpdater';
+import { ReportManager } from './ReportManager';
 import { afkManager } from './AFKManager';
 import { logger } from '../utils/logger';
 
@@ -19,6 +20,7 @@ export interface Managers {
     webhook: WebhookManager;
     roleMenu: RoleMenuManager;
     queueMessageUpdater: QueueMessageUpdater;
+    report: ReportManager;
 }
 
 let managers: Managers | null = null;
@@ -40,6 +42,7 @@ export function initManagers(client: Client): Managers {
         webhook: new WebhookManager(),
         roleMenu: new RoleMenuManager(),
         queueMessageUpdater: new QueueMessageUpdater(client),
+        report: new ReportManager(client),
     };
 
     managers.challenge.start();

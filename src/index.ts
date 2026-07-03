@@ -92,6 +92,7 @@ client.once('ready', async () => {
         for (const cfg of gameConfigs) {
             if (cfg.queueChannelId) {
                 queueManager.setChannel(cfg.game, cfg.mode, cfg.queueChannelId, cfg.guildId, cfg.queueMessageId ?? undefined);
+                queueManager.setVoiceGate(cfg.game, cfg.mode, cfg.voiceGateEnabled);
             } else {
                 logger.warn(`[startup] Queue "${cfg.game} ${cfg.mode}" configured without a queue channel.`);
             }
@@ -190,23 +191,23 @@ client.on('interactionCreate', async (interaction) => {
                     await getManagers().leaderboard.updateGameLeaderboards(game);
                 }
                 await interaction.editReply({ content: '🔄 Leaderboard refreshed.' });
+            } else if (interaction.customId.startsWith('report_')) {
+                const { getManagers } = await import('./managers/registry');
+                await getManagers().report.handleButton(interaction);
             } else if (interaction.customId === 'rl_checkin') {
                 await interaction.reply({ content: `✅ **${interaction.user.username}** is checked in.`, ephemeral: false });
             } else if (interaction.customId === 'match_report_win' || interaction.customId === 'match_cancel') {
-                const { lobbyManager } = await import('./managers/LobbyManager');
-                const lobby = lobbyManager.getLobby(interaction.channelId!);
-                const hint = lobby
-                    ? (interaction.customId === 'match_cancel'
-                        ? `Use \`/cancel match_id:${lobby.matchId}\` to cancel this match.`
-                        : `Use \`/reportwin match_id:${lobby.matchId} winning_team:<team1|team2>\` to report.`)
-                    : 'This match is no longer active.';
-                await interaction.reply({ content: `ℹ️ ${hint}`, ephemeral: true });
+                // Legacy buttons from pre-Lot-4 pinned messages
+                await interaction.reply({ content: 'ℹ️ This button is obsolete — use the **🏁 Result report** message pinned in the match lobby.', ephemeral: true });
             }
         } else if (interaction.isStringSelectMenu()) {
             if (interaction.customId.startsWith('setup_')) {
                 await handleSetupInteraction(interaction);
             } else if (interaction.customId.startsWith('setprofile_')) {
                 await handleSetProfileInteraction(interaction);
+            } else if (interaction.customId.startsWith('report_place_')) {
+                const { getManagers } = await import('./managers/registry');
+                await getManagers().report.handleSelect(interaction);
             } else if (interaction.customId === 'draft_pick') {
                 await draftManager.handleInteraction(interaction);
             } else if (interaction.customId === 'veto_ban') {

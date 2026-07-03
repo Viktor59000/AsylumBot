@@ -49,8 +49,16 @@ export const command = {
             create: { userId, game, ign: pseudo },
         });
 
+        // Tracker deep-links built from the IGN (no API required — DESIGN §3bis)
+        const { formatTrackerLinks } = await import('../../utils/trackers');
+        const regionConfig = interaction.guildId
+            ? await prisma.gameConfig.findFirst({ where: { guildId: interaction.guildId, game }, select: { region: true } })
+            : null;
+        const links = formatTrackerLinks(game, pseudo, regionConfig?.region ?? 'EUW');
+
         await interaction.reply({
-            content: `✅ Your IGN for **${GAME_CONFIGS[game as keyof typeof GAME_CONFIGS].name}** has been set to **${pseudo}**.`,
+            content: `✅ Your IGN for **${GAME_CONFIGS[game as keyof typeof GAME_CONFIGS].name}** has been set to **${pseudo}**.`
+                + (links ? `\n🔗 **Trackers:** ${links}` : ''),
             ephemeral: true,
         });
     },

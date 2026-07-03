@@ -160,6 +160,10 @@ export class LobbyManager {
         if (strategy) {
             await strategy.onLobbyReady(state, channel);
         }
+
+        // Standard secure report controls (buttons / position select) — zero slash-command needed
+        const { getManagers } = await import('./registry');
+        await getManagers().report.postReportControls(state, channel);
     }
 
     getLobby(channelId: string) {
