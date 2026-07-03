@@ -25,9 +25,10 @@ export class LeaderboardManager {
             const channel = guild.channels.cache.get(config.leaderboardChannelId) as TextChannel;
             if (!channel) continue;
 
-            // Fetch Top Players of this ladder
+            // Fetch Top Players of this ladder (active season only)
+            const { getActiveSeasonId } = await import('../utils/season');
             const players = await prisma.elo.findMany({
-                where: { game, mode },
+                where: { game, mode, seasonId: await getActiveSeasonId() },
                 orderBy: { rating: 'desc' },
                 take: 20,
                 include: { user: true }

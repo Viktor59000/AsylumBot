@@ -1,18 +1,17 @@
 import { prisma } from '../utils/db';
+import { getActiveSeasonId } from '../utils/season';
+import { awardBadge } from '../utils/badges';
 
 
 export class EloManager {
 
-    // Elo is keyed by (userId, game, mode, season): each queue mode has its own ladder.
+    // Elo is keyed by (userId, game, mode, season). "Current" rows carry the
+    // ACTIVE season id (null before the first /season start — legacy behavior).
 
     static async getElo(userId: string, game: string, mode: string): Promise<number> {
+        const seasonId = await getActiveSeasonId();
         const userElo = await prisma.elo.findFirst({
-            where: {
-                userId,
-                game,
-                mode,
-                seasonId: null // Assuming current season is null (active) or handled elsewhere
-            },
+            where: { userId, game, mode, seasonId },
         });
 
         return userElo ? userElo.rating : 1000; // Default Elo 1000
@@ -26,18 +25,21 @@ export class EloManager {
             create: { id: userId, username: 'Unknown' }, // Username will be updated elsewhere or ignored
         });
 
+        const seasonId = await getActiveSeasonId();
         const existingElo = await prisma.elo.findFirst({
-            where: { userId, game, mode, seasonId: null }
+            where: { userId, game, mode, seasonId }
         });
 
+        let newStreak = win ? 1 : 0;
         if (existingElo) {
+            newStreak = win ? existingElo.winStreak + 1 : 0;
             await prisma.elo.update({
                 where: { id: existingElo.id },
                 data: {
                     rating: newRating,
                     wins: { increment: win ? 1 : 0 },
                     losses: { increment: win ? 0 : 1 },
-                    winStreak: win ? { increment: 1 } : 0,
+                    winStreak: newStreak,
                     highestRating: Math.max(existingElo.highestRating, newRating),
                 }
             });
@@ -50,11 +52,16 @@ export class EloManager {
                     rating: newRating,
                     wins: win ? 1 : 0,
                     losses: win ? 0 : 1,
-                    winStreak: win ? 1 : 0,
+                    winStreak: newStreak,
                     highestRating: Math.max(1000, newRating),
-                    seasonId: null
+                    seasonId
                 }
             });
+        }
+
+        // Visual badge: 5-win streak on one ladder (awarded once per game/mode)
+        if (newStreak === 5) {
+            await awardBadge(userId, 'streak_5', { game, mode });
         }
     }
 

@@ -294,24 +294,33 @@ export class ReportManager {
         const { getManagers } = await import('./registry');
         const eloChanges: string[] = [];
 
+        // Rush hour: Elo GAINS and challenge coins are multiplied (losses untouched)
+        const multiplier = await getManagers().event.getActiveMultiplier(guild.id, match.game);
+
         for (const player of match.players) {
             const isWinner = player.team === winningTeam;
             const currentElo = await EloManager.getElo(player.userId, match.game, match.mode);
             const opponentAvg = player.team === 'team1' ? avgElo2 : avgElo1;
 
-            const newRating = EloManager.calculateNewRating(currentElo, opponentAvg, isWinner ? 1 : 0);
-            const change = newRating - currentElo;
+            let newRating = EloManager.calculateNewRating(currentElo, opponentAvg, isWinner ? 1 : 0);
+            let change = newRating - currentElo;
+            if (multiplier > 1 && change > 0) {
+                change = Math.round(change * multiplier);
+                newRating = currentElo + change;
+            }
 
             await EloManager.updateElo(player.userId, match.game, match.mode, newRating, isWinner);
-            await getManagers().challenge.updateProgress(player.userId, isWinner);
+            await getManagers().challenge.updateProgress(player.userId, isWinner, { game: match.game, coinMultiplier: multiplier });
 
-            eloChanges.push(`${isWinner ? '✅' : '❌'} <@${player.userId}>: ${change > 0 ? '+' : ''}${change} (${newRating})`);
+            eloChanges.push(`${isWinner ? '✅' : '❌'} <@${player.userId}>: ${change > 0 ? '+' : ''}${change} (${newRating})${multiplier > 1 && change > 0 ? ' 🔥' : ''}`);
         }
 
         const embed = new EmbedBuilder()
             .setColor(COLORS.ASYLUM_GOLD as any)
             .setTitle('Match Reported')
-            .setDescription(`**Winner:** ${winningTeam === 'team1' ? 'Team 1 🔵' : 'Team 2 🔴'}\n**Match ID:** ${matchId}${match.map ? `\n**Map:** ${match.map}` : ''}`)
+            .setDescription(
+                `**Winner:** ${winningTeam === 'team1' ? 'Team 1 🔵' : 'Team 2 🔴'}\n**Match ID:** ${matchId}${match.map ? `\n**Map:** ${match.map}` : ''}` +
+                (multiplier > 1 ? `\n🔥 **RUSH HOUR ×${multiplier}** (gains boosted)` : ''))
             .addFields({ name: 'Elo Changes', value: eloChanges.join('\n') || 'No changes' })
             .setTimestamp();
 
@@ -365,6 +374,9 @@ export class ReportManager {
         }
         const fieldAvg = Array.from(teamRatings.values()).reduce((a, b) => a + b, 0) / totalPlaced;
 
+        // Rush hour: positive placement deltas and challenge coins are multiplied
+        const multiplier = await getManagers().event.getActiveMultiplier(guild.id, match.game);
+
         const resultLines: string[] = [];
 
         for (let i = 0; i < rankedTeams.length; i++) {
@@ -373,14 +385,17 @@ export class ReportManager {
             const members = teamMembers.get(teamKey)!;
             const teamRating = teamRatings.get(teamKey)!;
 
-            const delta = EloManager.calculatePlacementDelta(teamRating, fieldAvg, placement, totalPlaced);
+            let delta = EloManager.calculatePlacementDelta(teamRating, fieldAvg, placement, totalPlaced);
+            if (multiplier > 1 && delta > 0) {
+                delta = Math.round(delta * multiplier);
+            }
             const isWin = placement <= Math.ceil(totalPlaced / 2);
 
             const memberTags: string[] = [];
             for (const member of members) {
                 const currentElo = await EloManager.getElo(member.userId, match.game, match.mode);
                 await EloManager.updateElo(member.userId, match.game, match.mode, currentElo + delta, isWin);
-                await getManagers().challenge.updateProgress(member.userId, placement === 1);
+                await getManagers().challenge.updateProgress(member.userId, placement === 1, { game: match.game, coinMultiplier: multiplier });
                 memberTags.push(`<@${member.userId}>`);
             }
 
@@ -390,7 +405,7 @@ export class ReportManager {
             });
 
             const medal = placement === 1 ? '🥇' : placement === 2 ? '🥈' : placement === 3 ? '🥉' : `#${placement}`;
-            resultLines.push(`${medal} **Team ${teamKey.replace('team', '')}** — ${memberTags.join(' & ')}: ${delta > 0 ? '+' : ''}${delta}`);
+            resultLines.push(`${medal} **Team ${teamKey.replace('team', '')}** — ${memberTags.join(' & ')}: ${delta > 0 ? '+' : ''}${delta}${multiplier > 1 && delta > 0 ? ' 🔥' : ''}`);
         }
 
         const unplaced = Array.from(teamsInMatch).filter(t => !rankedTeams.includes(t));
@@ -406,7 +421,8 @@ export class ReportManager {
         const embed = new EmbedBuilder()
             .setColor(COLORS.ASYLUM_GOLD as any)
             .setTitle('Match Reported (Placement)')
-            .setDescription(`**Match ID:** ${matchId}\n**Ranking 1→${totalPlaced}**`)
+            .setDescription(`**Match ID:** ${matchId}\n**Ranking 1→${totalPlaced}**` +
+                (multiplier > 1 ? `\n🔥 **RUSH HOUR ×${multiplier}** (gains boosted)` : ''))
             .addFields({ name: 'Results', value: resultLines.join('\n') || 'No changes' })
             .setTimestamp();
 

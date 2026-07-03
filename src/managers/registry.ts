@@ -8,6 +8,8 @@ import { WebhookManager } from './WebhookManager';
 import { RoleMenuManager } from './RoleMenuManager';
 import { QueueMessageUpdater } from './QueueMessageUpdater';
 import { ReportManager } from './ReportManager';
+import { EventManager } from './EventManager';
+import { ensureBadges } from '../utils/badges';
 import { afkManager } from './AFKManager';
 import { logger } from '../utils/logger';
 
@@ -21,6 +23,7 @@ export interface Managers {
     roleMenu: RoleMenuManager;
     queueMessageUpdater: QueueMessageUpdater;
     report: ReportManager;
+    event: EventManager;
 }
 
 let managers: Managers | null = null;
@@ -43,10 +46,15 @@ export function initManagers(client: Client): Managers {
         roleMenu: new RoleMenuManager(),
         queueMessageUpdater: new QueueMessageUpdater(client),
         report: new ReportManager(client),
+        event: new EventManager(client),
     };
 
     managers.challenge.start();
     managers.decay.start();
+    managers.event.start();
+
+    // Seed the badge catalog (idempotent)
+    void ensureBadges().catch(err => logger.error('[registry] ensureBadges failed:', err));
 
     logger.info('[registry] Managers initialized.');
     return managers;
@@ -62,6 +70,7 @@ export function destroyManagers() {
     if (!managers) return;
     managers.challenge.destroy();
     managers.decay.destroy();
+    managers.event.destroy();
     managers.queueMessageUpdater.destroy();
     afkManager.stopMonitoring();
     managers = null;

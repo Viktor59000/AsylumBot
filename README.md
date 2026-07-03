@@ -30,10 +30,11 @@ Results are posted to `#match-history` and logged to `#inhouse-admin-logs`.
 ## ✨ Key Features
 
 ### 🏆 Elo & Ranking System
-*   **Skill Tracking**: Advanced Elo rating system (starting at 1000).
-*   **Ranks**: Progression from Bronze to Diamond based on Elo.
-*   **Season History**: Tracks performance across different seasons.
-*   **Leaderboards**: Global leaderboards for each game.
+*   **Skill Tracking**: Advanced Elo rating system (starting at 1000), per (game, mode, season).
+*   **Ranks**: Progression from Bronze to Diamond based on Elo (visual tiers on leaderboards).
+*   **Seasons**: real season lifecycle (`/season start` → matches/Elo linked to the active season → `/season end` with podium badges & coins, optional soft reset).
+*   **Leaderboards**: permanent auto-edited leaderboard message per (game, mode).
+*   **Engagement**: 🔥 rush hours (multiplied gains, auto-announced), daily + weekly challenges, first-win-of-the-day bonus per game, badges (`/stats`).
 
 ### ⚔️ Unified Queue & Voting System
 *   **Unified Queue**: All players join a single queue per game.
@@ -89,9 +90,11 @@ Results are posted to `#match-history` and logged to `#inhouse-admin-logs`.
 
 #### Setup & Config
 *   `/setup`: Initialize the bot (creates categories, roles, and channels).
-*   `/config`: Configure game settings and banners.
+*   `/config`: Configure game settings, banners and the voice gate.
 *   `/mmr <user> <game> <action> <amount>`: Manually adjust a player's Elo.
-*   `/season`: Manage seasons.
+*   `/season start <name> [soft_reset]`: Start a new active season (soft reset seeds ratings halfway back to 1000).
+*   `/season end`: End the season — podium badges + coins per (game, mode) ladder, stats archived.
+*   `/event rushhour <duration> [multiplier] [game] [start_in]`: Schedule a 🔥 rush hour (Elo gains & challenge coins multiplied, auto-announced). `/event list`, `/event cancel`.
 
 #### Moderation & Match Management
 *   `/reportwin <match_id> <winning_team>`: Report a team-vs-team match result.

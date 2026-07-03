@@ -31,6 +31,7 @@ export class Matchmaker {
         const modeCfg = getModeConfig(game, mode);
         const isPlacement = modeCfg?.matchType === 'placement';
 
+        const { getActiveSeasonId } = await import('../utils/season');
         const match = await prisma.match.create({
             data: {
                 game,
@@ -39,6 +40,7 @@ export class Matchmaker {
                 guildId: guild.id,
                 isRanked: isPlacement ? true : formation === 'Ranked',
                 status: 'pending',
+                seasonId: await getActiveSeasonId(),
                 players: {
                     create: players.map(p => ({ userId: p.user.id, team: 'pending' })),
                 },
@@ -116,8 +118,9 @@ export class Matchmaker {
 
     /** Active-season ratings for a set of players on one (game, mode) ladder (default 1000). */
     async getRatings(userIds: string[], game: string, mode: string): Promise<Map<string, number>> {
+        const { getActiveSeasonId } = await import('../utils/season');
         const rows = await prisma.elo.findMany({
-            where: { userId: { in: userIds }, game, mode, seasonId: null },
+            where: { userId: { in: userIds }, game, mode, seasonId: await getActiveSeasonId() },
             select: { userId: true, rating: true },
         });
         const ratings = new Map<string, number>();
@@ -317,8 +320,9 @@ export class Matchmaker {
     }
 
     private async markMatchLive(lobby: any, allUserIds: string[]) {
+        const { getActiveSeasonId } = await import('../utils/season');
         await prisma.elo.updateMany({
-            where: { userId: { in: allUserIds }, game: lobby.game, mode: lobby.queueMode },
+            where: { userId: { in: allUserIds }, game: lobby.game, mode: lobby.queueMode, seasonId: await getActiveSeasonId() },
             data: { lastMatchDate: new Date() }
         });
 

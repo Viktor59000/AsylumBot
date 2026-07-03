@@ -12,7 +12,7 @@ export const command = {
 
         const user = await prisma.user.findUnique({
             where: { id: interaction.user.id },
-            include: { daily: true }
+            include: { daily: true, weekly: true }
         });
 
         if (!user) {
@@ -21,35 +21,40 @@ export const command = {
         }
 
         const daily = user.daily || { matchesPlayed: 0, matchesWon: 0 };
+        const weekly = user.weekly || { matchesPlayed: 0, matchesWon: 0 };
 
-        // Goals (Hardcoded for now, should match Manager)
-        const GOAL_PLAYED = 3;
-        const GOAL_WON = 1;
+        // Goals (must match ChallengeManager)
+        const DAILY_PLAYED = 3, DAILY_WON = 1;
+        const WEEKLY_PLAYED = 10, WEEKLY_WON = 5;
 
-        const playedProgress = Math.min(daily.matchesPlayed, GOAL_PLAYED);
-        const wonProgress = Math.min(daily.matchesWon, GOAL_WON);
+        // First-win-of-the-day bonuses claimed today
+        const today = new Date().toISOString().slice(0, 10);
+        const firstWins = await prisma.dailyGameWin.findMany({
+            where: { userId: interaction.user.id, date: today }
+        });
+        const firstWinLine = firstWins.length > 0
+            ? firstWins.map(w => `🌟 ${w.game}`).join(' • ')
+            : '*None yet — win your first match of the day per game (+25 🪙)*';
 
-        const playedBar = getProgressBar(playedProgress, GOAL_PLAYED);
-        const wonBar = getProgressBar(wonProgress, GOAL_WON);
+        const field = (label: string, current: number, goal: number, reward: string) => ({
+            name: `${current >= goal ? '✅' : '⏳'} ${label} (${reward})`,
+            value: `${getProgressBar(Math.min(current, goal), goal)} **${Math.min(current, goal)}/${goal}**`,
+            inline: false
+        });
 
         const embed = new EmbedBuilder()
-            .setTitle(`🎯 Daily Challenges`)
+            .setTitle(`🎯 Challenges`)
             .setThumbnail(interaction.user.displayAvatarURL())
             .setColor(COLORS.ASYLUM_GOLD as any)
             .setDescription(`**Balance:** ${user.coins} 🪙`)
             .addFields(
-                {
-                    name: `${playedProgress >= GOAL_PLAYED ? '✅' : '⏳'} Play ${GOAL_PLAYED} Matches`,
-                    value: `${playedBar} **${playedProgress}/${GOAL_PLAYED}**`,
-                    inline: false
-                },
-                {
-                    name: `${wonProgress >= GOAL_WON ? '✅' : '⏳'} Win ${GOAL_WON} Match`,
-                    value: `${wonBar} **${wonProgress}/${GOAL_WON}**`,
-                    inline: false
-                }
+                field(`Daily — Play ${DAILY_PLAYED} Matches`, daily.matchesPlayed, DAILY_PLAYED, '+50 🪙'),
+                field(`Daily — Win ${DAILY_WON} Match`, daily.matchesWon, DAILY_WON, '+50 🪙'),
+                field(`Weekly — Play ${WEEKLY_PLAYED} Matches`, weekly.matchesPlayed, WEEKLY_PLAYED, '+150 🪙'),
+                field(`Weekly — Win ${WEEKLY_WON} Matches`, weekly.matchesWon, WEEKLY_WON, '+100 🪙'),
+                { name: '🌟 First win of the day (per game, +25 🪙)', value: firstWinLine, inline: false }
             )
-            .setFooter({ text: 'Resets daily at midnight', iconURL: BOT_ICON });
+            .setFooter({ text: 'Daily reset 00:00 UTC • Weekly reset Monday • Rush hours multiply rewards 🔥', iconURL: BOT_ICON });
 
         await interaction.editReply({ embeds: [embed] });
     }

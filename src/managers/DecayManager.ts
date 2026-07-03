@@ -30,9 +30,12 @@ export class DecayManager {
         const thresholdDate = new Date();
         thresholdDate.setDate(thresholdDate.getDate() - this.INACTIVITY_DAYS);
 
-        // Find inactive players with rating > 1000
+        // Find inactive players with rating > 1000 (active season only —
+        // archived seasons must never decay)
+        const { getActiveSeasonId } = await import('../utils/season');
         const inactiveElos = await prisma.elo.findMany({
             where: {
+                seasonId: await getActiveSeasonId(),
                 lastMatchDate: {
                     lt: thresholdDate
                 },

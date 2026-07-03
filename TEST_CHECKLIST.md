@@ -199,5 +199,42 @@ Serveur Discord de **test** (vide), bot lancé avec `npm run dev`. Coche au fur 
 
 ---
 
+## LOT 5 — Engagement (rush hours, saisons, challenges, badges)
+
+### Pré-vol Lot 5
+- [ ] `git checkout lot-5-engagement` puis `npx prisma migrate deploy` → migration `lot5_engagement`
+- [ ] `npx tsc --noEmit` → 0 erreur
+- [ ] ⚠️ Comprendre le modèle : tes ratings actuels vivent « hors saison » (`seasonId null`). Au premier `/season start`, les ladders repartent à 1000 — **sauf** avec `soft_reset:true` qui ressème depuis l'existant (à mi-chemin de 1000).
+
+### A. ⭐ Saisons complètes
+- [ ] `/season start name:"Season 1" soft_reset:true` → confirme « X rating(s) seeded » ; un joueur qui était à 1200 est maintenant à **1100** (`/stats`)
+- [ ] `/season start` à nouveau → refus « Season 1 is still active »
+- [ ] Jouer un match → l'Elo bouge sur la saison active ; `/leaderboard` n'affiche **que** la saison active
+- [ ] Jouer **3+ matchs** avec 2 joueurs (min. requis pour les récompenses) puis `/season end` → embed **podium par ladder** : 🥇/🥈 + coins (200/100) ; `/stats` → badge **🏆 Season Champion** visible, l'ancienne saison apparaît dans **📜 Season History**
+- [ ] Après `end` : plus de saison active → `/season start name:"Season 2"` (sans soft reset) → tout le monde re-part à 1000
+
+### B. ⭐ Rush hours
+- [ ] `/event rushhour duration:10 multiplier:2` → dans la minute, **annonce 🔥 RUSH HOUR** dans tous les salons de file
+- [ ] Reporter un match pendant le créneau → le **gagnant** gagne ×2 (marqué 🔥 dans l'embed), le **perdant perd le montant normal** (non doublé — voulu)
+- [ ] Les coins de challenges gagnés pendant le créneau sont ×2 (marqué 🔥×2 dans le DM)
+- [ ] `/event rushhour duration:10 multiplier:2 game:rl` → l'annonce ne part que dans les salons RL ; un report LoL pendant ce créneau n'est **pas** boosté
+- [ ] `/event list` montre actif/planifié ; `/event cancel id:<X>` → annonce de fin dans la minute
+- [ ] Fin naturelle du créneau → annonce « Rush hour ended » (une seule fois, même après restart)
+
+### C. Challenges étendus
+- [ ] `/challenges` affiche : Daily (3 joués / 1 gagné), **Weekly (10 joués +150 / 5 gagnés +100)**, **première victoire du jour par jeu (+25)** et le solde
+- [ ] Gagner son premier match du jour sur un jeu → DM « 🌟 First win of the day » +25 ; re-gagner le même jour sur le même jeu → pas de re-bonus ; sur un **autre jeu** → nouveau +25
+- [ ] Le compteur weekly survit au reset daily (minuit UTC) et se remet à zéro le lundi
+
+### D. Badges & rangs visuels
+- [ ] 5 victoires d'affilée sur un ladder → badge **🔥 On Fire** dans `/stats` (une fois par jeu/mode)
+- [ ] `/leaderboard` : chaque ligne porte l'emoji de tier (🟫⬜🟨🟦💎) selon l'Elo
+
+### E. Non-régression
+- [ ] Cycle complet (join → pop → report boutons → history) inchangé hors rush hour (Δ Elo standards, pas de 🔥)
+- [ ] Ctrl+C pendant un rush hour actif → relance → pas de double annonce, multiplicateur toujours actif jusqu'à la fin du créneau
+
+---
+
 ## Comment reporter un bug ici
 Copie dans le chat : (1) ce que tu as fait, (2) ce qui était attendu, (3) ce qui s'est passé, (4) les **logs console** au moment du bug (masque tout secret). Je corrige avant de passer au lot suivant.

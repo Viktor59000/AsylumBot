@@ -48,8 +48,9 @@ export const createQueueEmbed = async (game: string, mode: string, queue: QueueP
 
     // Batch data: Elo (this ladder) + declared roles
     const userIds = queue.map(p => p.user.id);
+    const { getActiveSeasonId } = require('./season');
     const [eloRows, ignRows] = userIds.length > 0 ? await Promise.all([
-        prisma.elo.findMany({ where: { userId: { in: userIds }, game, mode, seasonId: null }, select: { userId: true, rating: true } }),
+        prisma.elo.findMany({ where: { userId: { in: userIds }, game, mode, seasonId: await getActiveSeasonId() }, select: { userId: true, rating: true } }),
         prisma.userIgn.findMany({ where: { userId: { in: userIds }, game }, select: { userId: true, preferences: true } }),
     ]) : [[], []];
 
@@ -166,12 +167,14 @@ export const createLeaderboardEmbed = (
     }
 
     if (players.length > 0) {
+        const { RANK_EMOJI } = require('./badges');
         const description = players
             .map((p, i) => {
                 const rank = (page - 1) * 10 + i + 1;
                 const winRate = p.wins + p.losses > 0 ? Math.round((p.wins / (p.wins + p.losses)) * 100) : 0;
                 const streak = p.winStreak ? `🔥 ${p.winStreak}` : '';
-                return `\`#${rank}\` **${p.user.username}** • ⭐ **${p.rating}** • ${winRate}% WR ${streak}`;
+                const tier = RANK_EMOJI[getRankLabel(p.rating)] ?? '';
+                return `\`#${rank}\` ${tier} **${p.user.username}** • ⭐ **${p.rating}** • ${winRate}% WR ${streak}`;
             })
             .join('\n');
         embed.setDescription(description);

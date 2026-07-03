@@ -21,10 +21,32 @@ model User {
   igns      UserIgn[]
   penalties Penalty[]
   daily     DailyProgress?
+  weekly    WeeklyProgress?
+  badges    UserBadge[]
   purchases Purchase[]
-  
+
   clanId    Int?
   clan      Clan?    @relation(fields: [clanId], references: [id])
+}
+
+model WeeklyProgress {
+  id            Int      @id @default(autoincrement())
+  userId        String   @unique
+  matchesPlayed Int      @default(0)
+  matchesWon    Int      @default(0)
+  lastUpdate    DateTime @default(now())
+
+  user          User     @relation(fields: [userId], references: [id])
+}
+
+// First win of the day per game (+coins bonus) — one row per (user, game, UTC day)
+model DailyGameWin {
+  id     Int    @id @default(autoincrement())
+  userId String
+  game   String
+  date   String // YYYY-MM-DD (UTC)
+
+  @@unique([userId, game, date])
 }
 
 model DailyProgress {
@@ -197,6 +219,43 @@ model RoleMenuOption {
 model BotState {
   key   String @id
   value String
+}
+
+// Scheduled events (rush hours: Elo/coins multiplier over a time window)
+model Event {
+  id           Int      @id @default(autoincrement())
+  guildId      String
+  type         String   // 'rush_hour'
+  game         String?  // null = every game
+  multiplier   Float    @default(2)
+  startAt      DateTime
+  endAt        DateTime
+  announced    Boolean  @default(false) // start announcement sent
+  endAnnounced Boolean  @default(false) // end announcement sent
+  createdBy    String?
+}
+
+model Badge {
+  id          Int         @id @default(autoincrement())
+  key         String      @unique // 'season_champion', 'streak_5', ...
+  name        String
+  emoji       String
+  description String?
+
+  users       UserBadge[]
+}
+
+model UserBadge {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  badgeId   Int
+  seasonId  Int?     // season-scoped awards
+  game      String?
+  mode      String?
+  awardedAt DateTime @default(now())
+
+  user      User  @relation(fields: [userId], references: [id])
+  badge     Badge @relation(fields: [badgeId], references: [id])
 }
 
 model Clan {

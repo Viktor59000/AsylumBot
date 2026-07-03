@@ -59,8 +59,10 @@ export const command = {
             create: { id: targetUser.id, username: targetUser.username },
         });
 
+        const { getActiveSeasonId } = await import('../../utils/season');
+        const seasonId = await getActiveSeasonId();
         const eloRecord = await prisma.elo.findFirst({
-            where: { userId: targetUser.id, game, mode, seasonId: null }
+            where: { userId: targetUser.id, game, mode, seasonId }
         });
 
         let newRating = 1000;
@@ -87,7 +89,7 @@ export const command = {
                     userId: targetUser.id,
                     game,
                     mode,
-                    seasonId: null,
+                    seasonId,
                     rating: newRating,
                     wins: 0,
                     losses: 0,

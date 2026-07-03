@@ -49,9 +49,12 @@ export const command = {
         const ITEMS_PER_PAGE = 10;
         let currentPage = 1;
 
+        const { getActiveSeasonId } = await import('../utils/season');
+        const seasonId = await getActiveSeasonId();
+
         const fetchPlayers = async (page: number) => {
             return await prisma.elo.findMany({
-                where: { game, mode },
+                where: { game, mode, seasonId },
                 orderBy: { [sort]: 'desc' },
                 skip: (page - 1) * ITEMS_PER_PAGE,
                 take: ITEMS_PER_PAGE,
@@ -59,7 +62,7 @@ export const command = {
             });
         };
 
-        const totalPlayers = await prisma.elo.count({ where: { game, mode } });
+        const totalPlayers = await prisma.elo.count({ where: { game, mode, seasonId } });
         const totalPages = Math.ceil(totalPlayers / ITEMS_PER_PAGE) || 1;
 
         let players = await fetchPlayers(currentPage);

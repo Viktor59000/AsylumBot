@@ -12,9 +12,12 @@ function getRank(rating: number) {
 }
 
 async function generateGeneralStats(targetUser: User) {
+    const { getActiveSeasonId } = await import('../../utils/season');
+    const { getUserBadges } = await import('../../utils/badges');
+    const seasonId = await getActiveSeasonId();
     const userWithClan = await prisma.user.findUnique({
         where: { id: targetUser.id },
-        include: { clan: true, elo: { where: { seasonId: null } } }
+        include: { clan: true, elo: { where: { seasonId } } }
     });
 
     const totalElo = userWithClan?.elo.reduce((sum, e) => sum + e.rating, 0) || 0;
@@ -49,6 +52,21 @@ async function generateGeneralStats(targetUser: User) {
 
     embed.addFields(gameFields);
 
+    // Badges (season rewards, streaks, ...)
+    const badges = await getUserBadges(targetUser.id);
+    if (badges.length > 0) {
+        const counts = new Map<string, { emoji: string; name: string; count: number }>();
+        for (const ub of badges) {
+            const entry = counts.get(ub.badge.key) ?? { emoji: ub.badge.emoji, name: ub.badge.name, count: 0 };
+            entry.count++;
+            counts.set(ub.badge.key, entry);
+        }
+        const line = Array.from(counts.values())
+            .map(b => `${b.emoji} ${b.name}${b.count > 1 ? ` ×${b.count}` : ''}`)
+            .join(' • ');
+        embed.addFields({ name: '🎖️ Badges', value: line, inline: false });
+    }
+
     return embed;
 }
 
@@ -66,8 +84,10 @@ async function generateGameStats(targetUser: User, game: string) {
         orderBy: { seasonId: 'desc' },
     });
 
-    const activeElos = eloRecords.filter(e => e.seasonId === null);
-    const historyElos = eloRecords.filter(e => e.seasonId !== null);
+    const { getActiveSeasonId } = await import('../../utils/season');
+    const activeSeasonId = await getActiveSeasonId();
+    const activeElos = eloRecords.filter(e => e.seasonId === activeSeasonId);
+    const historyElos = eloRecords.filter(e => e.seasonId !== activeSeasonId && e.seasonId !== null);
 
     const ignRecord = await prisma.userIgn.findUnique({
         where: { userId_game: { userId: targetUser.id, game } },

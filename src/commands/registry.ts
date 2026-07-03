@@ -8,6 +8,7 @@ import { command as adminSeason } from './admin/season';
 import { command as adminSetup } from './admin/setup';
 import { command as adminSub } from './admin/sub';
 import { command as adminSuspend } from './admin/suspend';
+import { command as adminEvent } from './admin/event';
 import { command as adminWebhook } from './admin/webhook';
 import { command as clanClan } from './clan/clan';
 import { command as generalHelp } from './general/help';
@@ -33,6 +34,7 @@ export const allCommands = [
     adminSetup,
     adminSub,
     adminSuspend,
+    adminEvent,
     adminWebhook,
     clanClan,
     generalHelp,
