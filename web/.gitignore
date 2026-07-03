@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+next-env.d.ts
+# Copie auto-synchronisée depuis ../prisma/schema.prisma (npm run prisma:sync)
+prisma/schema.prisma
+tsconfig.tsbuildinfo

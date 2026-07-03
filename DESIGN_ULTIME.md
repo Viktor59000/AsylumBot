@@ -161,6 +161,18 @@ Elo (à compléter dans `EloManager.updateElo`) : mettre à jour `winStreak` (in
 
 Objectif : chaque étape = un embed soigné, une bannière contextuelle, des boutons clairs, un seul message qui se met à jour (pas de spam).
 
+### 6.0 Direction artistique — « premium », pas d'emojis « IA »
+
+Principe : le rendu doit faire **soigné/pro**, pas « bot généré ». Les emojis Unicode décoratifs en pagaille (⭐🔥🏆🎖️🟦…) font justement « IA » et cheap. Cible :
+
+- **Remplacer les emojis décoratifs par des assets** : **emojis custom du serveur** (uploadés, ex. `:asylum_rank_diamond:`, `:asylum_badge_onfire:`, icônes de jeu) et/ou **images** dans les embeds (thumbnails, bannières, emblèmes de rang). Discord affiche les emojis custom inline dans les embeds → même fluidité, look premium.
+- **Rangs & badges = emblèmes visuels** (images/emojis custom), pas des carrés colorés Unicode.
+- **Icônes de jeu** = vrais logos (assets), pas ⚽🔫🎯.
+- **Garder quelques marqueurs fonctionnels sobres** (✅/❌ d'état) est ok ; c'est le **décoratif** qu'on retire.
+- **Implémentation** : centraliser tous les glyphes dans une table `assets/emojis` (map nom → `<:custom:id>` ou chemin image), avec **fallback Unicode** si l'asset n'est pas encore uploadé (zéro crash, dégradation propre). Ainsi on branche les vrais visuels sans retoucher la logique.
+
+> Ce chantier est un **pass de direction artistique** transverse : il nécessite **tes assets** (emojis custom uploadés sur le serveur + images de rangs/badges/logos). Le code pose la table + les fallbacks ; toi tu fournis les visuels. À planifier comme un lot dédié (« Premium visuals ») une fois le fonctionnel bouclé.
+
 ### 6.1 Bannières (AssetManager)
 - Le système d'assets existe (`AssetManager` : gif > png > jpg, par jeu + fallback global). À **peupler** : `assets/<jeu>/queue_banner`, `live_banner`, `rank_banner`, `win_banner`, + `assets/global/` par défaut.
 - Ajouter des bannières par **mode** et par **événement** (rush hour) : `queue_banner_soloq`, `event_rushhour`, etc.

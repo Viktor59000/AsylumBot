@@ -25,6 +25,7 @@ async function generateGeneralStats(targetUser: User) {
 
     const embed = new EmbedBuilder()
         .setTitle('📊 Player Statistics')
+        .setURL(process.env.WEB_BASE_URL ? `${process.env.WEB_BASE_URL}/player/${targetUser.id}` : null)
         .setAuthor({ name: targetUser.username, iconURL: targetUser.displayAvatarURL() })
         .setColor(COLORS.ASYLUM_GOLD as any)
         .setThumbnail(targetUser.displayAvatarURL())

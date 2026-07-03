@@ -116,6 +116,18 @@ Results are posted to `#match-history` and logged to `#inhouse-admin-logs`.
 
 **Deployment (Railway)**: run the bot as a worker and attach the managed PostgreSQL plugin; set `DATABASE_URL` to the plugin URL. The bot is crash-safe: on startup it resets stuck player statuses, abandons unreported matches and deletes orphaned match channels.
 
+## 🌐 Web app (`web/`)
+
+Next.js (App Router) stats site sharing the bot's PostgreSQL database (the Prisma schema is auto-copied from `prisma/schema.prisma` at build). Pages: `/` (top ladders + live rush hour), `/leaderboard/[game]` (mode & season filters), `/player/[id]`, `/match/[id]`, `/clan/[name]`, `/me` (Discord OAuth2 login — the Discord ID is the shared key with the bot).
+
+```bash
+cd web
+npm install
+cp .env.example .env   # DATABASE_URL (same as bot), DISCORD_CLIENT_ID/SECRET, NEXTAUTH_URL, NEXTAUTH_SECRET
+npm run dev            # http://localhost:3000
+```
+Add `http://localhost:3000/api/auth/callback/discord` to the OAuth2 redirects of your Discord application. Set `WEB_BASE_URL` in the **bot's** `.env` to link Discord embeds to web profiles.
+
 > Note: Valorant Tracker.gg integration is **not implemented yet** (planned).
 
 ---

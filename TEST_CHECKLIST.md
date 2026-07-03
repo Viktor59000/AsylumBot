@@ -236,5 +236,42 @@ Serveur Discord de **test** (vide), bot lancé avec `npm run dev`. Coche au fur 
 
 ---
 
+## LOT 6 — Site web (Next.js + OAuth Discord + base partagée)
+
+### Pré-vol Lot 6 (variables d'env web)
+- [ ] `git checkout lot-6-site` (aucune migration — le site lit le même schéma)
+- [ ] `cd web && npm install`
+- [ ] Copier `web/.env.example` → `web/.env` et remplir :
+  - `DATABASE_URL` = **la même** que le bot (`postgresql://postgres:postgres@localhost:5432/asylumbot`)
+  - `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` = Developer Portal > ton app > OAuth2 (le même app que le bot marche)
+  - ⚠️ Dans le portail, OAuth2 > Redirects : **ajouter** `http://localhost:3000/api/auth/callback/discord`
+  - `NEXTAUTH_URL=http://localhost:3000` et `NEXTAUTH_SECRET` = chaîne aléatoire longue (`openssl rand -base64 32`)
+- [ ] `npm run build` → « Compiled successfully », puis `npm run dev` → http://localhost:3000
+  - *note* : `npm run dev`/`build` copient automatiquement le schéma Prisma du bot (`prisma:sync`) — ne jamais éditer `web/prisma/schema.prisma` à la main.
+
+### A. Pages publiques (bot lancé à côté, quelques matchs joués)
+- [ ] `/` : hero + top 5 par ladder configuré ; si un `/event rushhour` est actif → encart « Rush hour live »
+- [ ] `/leaderboard/rl` : filtres **mode** (1v1/2v2/3v3) et **saison** (pills), tri par Elo, barre de winrate, streak, peak ; pagination si > 25
+- [ ] `/player/<discordId>` : ladders de la saison active, badges (après un `/season end` : « Season Champion »), 10 derniers matchs avec Win/Loss ou placement, historique de saisons
+- [ ] `/match/<id>` : feuille de match — équipes (Team bleu/rouge en tvt, classement #1..N en placement), vainqueur surligné, carte si veto
+- [ ] `/clan/<name>` : stats du clan (membres, Elo cumulé saison active, games) + roster trié, leader marqué
+- [ ] URL inconnue (`/player/000`) → 404 propre, pas de crash
+
+### B. ⭐ Login Discord (OAuth2)
+- [ ] « Sign in with Discord » → OAuth Discord → retour connecté : pseudo dans la nav
+- [ ] `/me` → **redirige vers `/player/<ton Discord ID>`** (la clé partagée bot ↔ web)
+- [ ] Le profil affiché correspond bien à TES stats du bot (même Elo que `/stats` sur Discord)
+- [ ] Sign out → `/me` repropose le login
+
+### C. Liaison temps réel bot ↔ web
+- [ ] Jouer + reporter un match sur Discord → **rafraîchir** la page leaderboard → l'Elo a bougé (SSR, pas de cache)
+- [ ] Ajouter `WEB_BASE_URL=http://localhost:3000` dans le `.env` du **bot** + relancer → le titre de `/stats` sur Discord est un **lien cliquable** vers le profil web
+
+### D. Build & production
+- [ ] `cd web && npx tsc --noEmit` → 0 erreur ; `npm run build` → OK
+- [ ] (Déploiement plus tard : bot = worker Railway, web = Railway/Vercel, même Postgres managé ; ajouter l'URL prod aux Redirects OAuth)
+
+---
+
 ## Comment reporter un bug ici
 Copie dans le chat : (1) ce que tu as fait, (2) ce qui était attendu, (3) ce qui s'est passé, (4) les **logs console** au moment du bug (masque tout secret). Je corrige avant de passer au lot suivant.
